@@ -17,6 +17,16 @@ Prompts, source code and model inference stay on the computer. Web search and UR
 - Starts Ollama when possible and releases models it loaded when Artinium exits.
 - Supports drag-and-drop paths and image paste when the selected model accepts vision input.
 
+## Quick install
+
+On Linux or macOS, run this single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mincmat/Artinium/main/install | bash
+```
+
+The installer downloads the latest Artinium source, shows its progress, creates an isolated environment and installs the `artinium` command without requiring `sudo`.
+
 ## Requirements and installation
 
 Artinium supports Python 3.11 or newer and requires Ollama.
