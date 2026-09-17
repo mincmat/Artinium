@@ -1,5 +1,7 @@
 # Artinium
 
+> **Beta** — Artinium is actively evolving; interfaces and defaults may change between releases.
+
 Artinium is a local coding agent for the terminal. It runs through [Ollama](https://ollama.com/), works with the models already installed on the computer, and helps inspect, edit and run code inside a chosen workspace.
 
 Prompts, source code and model inference stay on the computer. Web search and URL fetches only leave the computer when the user asks Artinium to use them.
@@ -29,7 +31,7 @@ The installer downloads the latest Artinium source, shows its progress, creates 
 
 ## Requirements and installation
 
-Artinium supports Python 3.11 or newer and requires Ollama.
+Artinium supports Python 3.11 or newer and requires Ollama for model inference.
 
 1. Install [Ollama](https://ollama.com/) for the operating system.
 2. Download a model with tool support. For example:
@@ -61,6 +63,8 @@ For source development, clone and install the project manually:
    ```bash
    artinium
    ```
+
+If Ollama is not installed or cannot be found, Artinium opens its interface, tries to start Ollama, and then shows a clear installation message. The prompt remains unavailable until Ollama is installed and running. Once Ollama is available but has no models, Artinium asks you to download one with `ollama pull`.
 
 Use `artinium --check` to verify the Ollama connection without opening the interface. Use `artinium --workspace /path/to/project` to select a workspace explicitly.
 
