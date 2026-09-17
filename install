@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly APP_NAME="Artinium"
+readonly REPO="mincmat/Artinium"
+readonly INSTALL_ROOT="${ARTINIUM_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/artinium}"
+readonly BIN_ROOT="${ARTINIUM_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
+readonly DOWNLOAD_ROOT="${TMPDIR:-/tmp}/artinium-install.$$"
+readonly TARBALL_URL="https://github.com/${REPO}/archive/refs/heads/main.tar.gz"
+
+cleanup() { rm -rf "$DOWNLOAD_ROOT"; }
+trap cleanup EXIT
+
+step() { printf '\n\033[1;36m[%s/5]\033[0m %s\n' "$1" "$2"; }
+ok() { printf '\033[1;32m✓\033[0m %s\n' "$1"; }
+fail() { printf '\033[1;31m✗\033[0m %s\n' "$1" >&2; exit 1; }
+
+command -v curl >/dev/null 2>&1 || fail "curl is required. Install curl and run this command again."
+command -v tar >/dev/null 2>&1 || fail "tar is required. Install tar and run this command again."
+
+case "$(uname -s)" in
+  Linux|Darwin) ;;
+  *) fail "Artinium's installer supports Linux and macOS." ;;
+esac
+
+step 1 "Checking prerequisites"
+PYTHON=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    PYTHON="$(command -v "$candidate")"
+    break
+  fi
+done
+[ -n "$PYTHON" ] || fail "Python 3.11 or newer is required."
+ok "$("$PYTHON" --version) detected"
+
+step 2 "Preparing installation directories"
+mkdir -p "$DOWNLOAD_ROOT" "$INSTALL_ROOT" "$BIN_ROOT"
+ok "Using $INSTALL_ROOT"
+
+step 3 "Downloading Artinium"
+printf '  Downloading latest source  '
+curl --fail --location --progress-bar "$TARBALL_URL" --output "$DOWNLOAD_ROOT/artinium.tar.gz"
+printf '\n'
+tar -xzf "$DOWNLOAD_ROOT/artinium.tar.gz" -C "$DOWNLOAD_ROOT"
+SOURCE_DIR="$(find "$DOWNLOAD_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'Artinium-*' -print -quit)"
+[ -n "$SOURCE_DIR" ] || fail "The downloaded Artinium archive was empty."
+ok "Source downloaded"
+
+step 4 "Installing isolated environment"
+"$PYTHON" -m venv "$INSTALL_ROOT/venv"
+"$INSTALL_ROOT/venv/bin/python" -m pip install --disable-pip-version-check --quiet --upgrade pip
+"$INSTALL_ROOT/venv/bin/python" -m pip install --disable-pip-version-check --quiet "$SOURCE_DIR"
+ok "Artinium and its dependencies installed"
+
+step 5 "Adding the artinium command"
+ln -sfn "$INSTALL_ROOT/venv/bin/artinium" "$BIN_ROOT/artinium"
+ok "Installed at $BIN_ROOT/artinium"
+
+case ":${PATH}:" in
+  *":${BIN_ROOT}:"*) ;;
+  *)
+    printf '\n\033[1;33mAdd this directory to PATH to use Artinium:\033[0m\n'
+    printf '  export PATH="%s:$PATH"\n' "$BIN_ROOT"
+    ;;
+esac
+
+printf '\n\033[1;32m%s is ready.\033[0m Run \033[1martinium\033[0m inside a project directory.\n' "$APP_NAME"

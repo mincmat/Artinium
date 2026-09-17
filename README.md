@@ -28,7 +28,15 @@ Artinium supports Python 3.11 or newer and requires Ollama.
    ollama pull qwen3:8b
    ```
 
-3. Install Artinium:
+3. Install Artinium with the one-line installer. It detects Linux or macOS, shows download progress, creates an isolated environment and installs the `artinium` command without `sudo`:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/mincmat/Artinium/main/install | bash
+   ```
+
+   If `~/.local/bin` is not already on your `PATH`, the installer prints the exact `export` command to add it.
+
+For source development, clone and install the project manually:
 
    ```bash
    git clone https://github.com/mincmat/Artinium.git
