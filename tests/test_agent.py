@@ -48,6 +48,13 @@ class CapturingClient:
         yield {"message": {"content": "done"}, "done": True}
 
 
+class ThinkingClient:
+    async def chat_stream(self, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        yield {"message": {"thinking": "I should inspect the file. "}, "done": False}
+        yield {"message": {"thinking": "Then make the smallest change."}, "done": False}
+        yield {"message": {"content": "Done."}, "done": True}
+
+
 class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_ollama_client_explains_generation_timeouts(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -154,6 +161,17 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             )  # type: ignore[arg-type]
             _ = [event async for event in agent.run("hello")]
             self.assertEqual(client.request["tools"], [])  # type: ignore[index]
+
+    async def test_agent_streams_reasoning_separately_from_the_reply(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Agent(
+                ThinkingClient(), ModelInfo("reasoning-test", capabilities=("completion", "thinking")),
+                ToolRegistry(Workspace(Path(directory))),
+            )  # type: ignore[arg-type]
+            events = [event async for event in agent.run("hello")]
+            thinking = [event.data["text"] for event in events if event.kind == "thinking_delta"]
+            self.assertEqual(thinking, ["I should inspect the file. ", "Then make the smallest change."])
+            self.assertEqual([event.data["text"] for event in events if event.kind == "delta"], ["Done."])
 
     async def test_images_are_sent_in_the_user_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

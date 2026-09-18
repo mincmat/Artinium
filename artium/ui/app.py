@@ -1395,6 +1395,12 @@ class ArtiumApp(App[None]):
     .tool-call.-failed { color: $text; }
     .tool-detail { height: auto; padding: 0 2; background: $surface; color: #888888; }
     .tool-detail.-diff { padding: 1 2 0 2; background: #151515; }
+    .thinking-block { width: 1fr; height: auto; margin: 0 0 1 0; padding: 0; background: $bg; color: $text-muted; }
+    .thinking-block CollapsibleTitle { padding: 0; background: $bg; color: $text-muted; }
+    .thinking-block CollapsibleTitle:hover { background: #101010; color: $text; }
+    .thinking-block CollapsibleTitle:focus { background: $boost; color: #d0d0d0; text-style: none; }
+    .thinking-block Contents { padding: 0; }
+    .thinking-detail { height: auto; padding: 0 2; background: $surface; color: #888888; }
     #composer-shell {
         height: 6; margin: 0 6 2 3; padding: 1 2; background: $boost;
         border: none;
@@ -1774,6 +1780,8 @@ class ArtiumApp(App[None]):
                 elif event.kind == "assistant_start":
                     chat.prepare_assistant()
                     self._autosave_active_session(force=True)
+                elif event.kind == "thinking_delta":
+                    chat.add_thinking(event.data["text"])
                 elif event.kind == "delta":
                     await chat.add_delta(event.data["text"])
                     self._autosave_active_session()

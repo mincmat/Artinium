@@ -144,6 +144,9 @@ class Agent:
                     think=self.settings.think_value(self.model.supports_reasoning),
                 ):
                     message = chunk.get("message") or {}
+                    thinking = message.get("thinking") or ""
+                    if thinking:
+                        yield AgentEvent("thinking_delta", {"text": thinking})
                     text = message.get("content") or ""
                     if text:
                         content_parts.append(text)

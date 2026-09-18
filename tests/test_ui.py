@@ -17,7 +17,7 @@ from artium.ui.app import (
 )
 from artium.sessions import SessionRecord
 from artium.tools import QuestionRequest
-from artium.ui.widgets import ActivityPulse, AssistantMessage, ChatLog, UserMessage, WorkspaceTree
+from artium.ui.widgets import ActivityPulse, AssistantMessage, ChatLog, ThinkingBlock, UserMessage, WorkspaceTree
 
 
 class FakeUIClient:
@@ -319,6 +319,23 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 app.query_one(AssistantMessage).focus()
                 await pilot.pause(0.05)
                 self.assertIs(app.focused, prompt)
+
+    async def test_thinking_is_available_in_a_collapsible_transcript_block(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                chat = app.query_one("#chat", ChatLog)
+                chat.add_thinking("First thought. ")
+                chat.add_thinking("Second thought.")
+                await pilot.pause(0.05)
+                block = app.query_one(ThinkingBlock)
+                self.assertTrue(block.collapsed)
+                self.assertIn("First thought. Second thought.", str(block.query_one("#thinking-detail-body", Static).renderable))
+                chat.finish_thinking()
+                self.assertIn("Thinking", block.title)
 
     async def test_session_manager_creates_and_restores_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

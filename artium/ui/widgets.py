@@ -73,6 +73,44 @@ class ActivityPulse(Static):
         self._render_state()
 
 
+class ThinkingBlock(Collapsible):
+    """A compact, click-to-expand record of a model's streamed reasoning."""
+
+    FRAMES = ActivityPulse.FRAMES
+    frame = reactive(0)
+
+    def __init__(self) -> None:
+        self._detail = Static("", markup=False, id="thinking-detail-body", classes="thinking-detail")
+        self._active = True
+        super().__init__(
+            self._detail,
+            title="Thinking…",
+            collapsed=True,
+            classes="thinking-block",
+        )
+        self.tooltip = "Click to show the model's reasoning."
+
+    def on_mount(self) -> None:
+        self.set_interval(0.09, self._tick)
+        self._render_title()
+
+    def _tick(self) -> None:
+        if self._active:
+            self.frame = (self.frame + 1) % len(self.FRAMES)
+            self._render_title()
+
+    def _render_title(self) -> None:
+        icon = self.FRAMES[self.frame] if self._active else "◇"
+        self.title = f"{icon}  Thinking"
+
+    def append(self, text: str) -> None:
+        self._detail.update(f"{self._detail.renderable}{text}")
+
+    def finish(self) -> None:
+        self._active = False
+        self._render_title()
+
+
 class ContextGauge(Static):
     """Compact context meter designed for the top bar."""
 
@@ -136,6 +174,7 @@ class ChatLog(VerticalScroll):
         self._tool_detail: Static | None = None
         self._tool_entries: list[Collapsible] = []
         self._activity: ActivityPulse | None = None
+        self._thinking: ThinkingBlock | None = None
 
     # Basic monochrome Unicode, intentionally avoiding private-use Nerd Font
     # glyphs and emojis. These render in the same terminal fonts that already
@@ -187,6 +226,7 @@ class ChatLog(VerticalScroll):
         self.call_after_refresh(self.scroll_end, animate=False)
 
     async def add_delta(self, text: str) -> None:
+        self.finish_thinking()
         if self._assistant_pending:
             await self.begin_assistant()
         self._assistant_text += text
@@ -401,6 +441,7 @@ class ChatLog(VerticalScroll):
         return "done"
 
     def add_tool(self, name: str, arguments: dict[str, Any]) -> None:
+        self.finish_thinking()
         self.clear_activity()
         self._assistant_pending = False
         self._tool_detail = Static("Waiting for result…", markup=True, classes="tool-detail")
@@ -467,6 +508,20 @@ class ChatLog(VerticalScroll):
             self._activity.remove()
             self._activity = None
 
+    def add_thinking(self, text: str) -> None:
+        """Append a reasoning chunk that the user may expand while it streams."""
+        if self._thinking is None:
+            self.clear_activity()
+            self._thinking = ThinkingBlock()
+            self._mount_animated(self._thinking)
+        self._thinking.append(text)
+        self.call_after_refresh(self.scroll_end, animate=False)
+
+    def finish_thinking(self) -> None:
+        if self._thinking is not None:
+            self._thinking.finish()
+            self._thinking = None
+
     def set_tool_details(self, visible: bool) -> None:
         for entry in self._tool_entries:
             entry.collapsed = not visible
@@ -479,6 +534,7 @@ class ChatLog(VerticalScroll):
         self._tool_detail = None
         self._tool_entries.clear()
         self._activity = None
+        self._thinking = None
         self._assistant_pending = False
 
     def prepare_assistant(self) -> None:
