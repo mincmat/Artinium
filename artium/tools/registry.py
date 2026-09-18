@@ -83,7 +83,7 @@ class ToolRegistry:
             tool("question", "Ask the user one focused question when a required choice is missing. Provide short options when useful.", {"question": string, "options": array}, ["question"]),
             tool("run_command", "Run a shell command in the workspace.", {"command": string, "timeout": integer}, ["command"]),
             tool("web_search", "Search the public web with DuckDuckGo and return titles, links, and snippets. Use it for current information, then verify important facts with fetch_url.", {"query": string, "limit": integer}, ["query"]),
-            tool("fetch_url", "Read the visible text of one specific public HTTP or HTTPS page. Prefer an official or primary source and cite its URL in the final answer.", {"url": string}, ["url"]),
+            tool("fetch_url", "Read the visible text of one specific public HTTP or HTTPS page. Prefer an official or primary source when verifying important facts.", {"url": string}, ["url"]),
         ]
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:

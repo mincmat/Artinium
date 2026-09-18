@@ -12,7 +12,7 @@ from .tools import ToolRegistry
 
 SYSTEM_PROMPT = """You are Artinium, a concise local coding agent. Inspect before editing. Use tools only when useful, make minimal changes, and work inside the workspace by default; only act outside it when the user explicitly asks. Keep answers short and report what changed. Use glob to find paths, grep to search with regular expressions, and question only when a missing user choice materially changes the result.
 
-For questions that depend on current public information, use web_search. For time-sensitive or important facts, follow a relevant primary source with fetch_url before answering. State only facts supported by the returned search results or page text; do not invent dates, versions, features, or quotes. End a web-based answer with a short Sources section listing the exact URLs you used. If the sources conflict or are insufficient, say so plainly."""
+For questions that depend on current public information, use web_search. For time-sensitive or important facts, follow a relevant primary source with fetch_url before answering. State only facts supported by the returned search results or page text; do not invent dates, versions, features, or quotes. If the sources conflict or are insufficient, say so plainly."""
 INTERRUPTION_NOTE = "[Previous task was interrupted before completion. Re-check state; do not assume unfinished actions succeeded.]"
 
 
@@ -118,7 +118,6 @@ class Agent:
         if images:
             user_message["images"] = images
         self.history.append(user_message)
-        web_sources: list[str] = []
         for iteration in range(1, self.max_iterations + 1):
             if self._auto_compact_context():
                 yield AgentEvent("compacted", {"automatic": True, **(self.last_compaction or {})})
@@ -171,8 +170,6 @@ class Agent:
             yield AgentEvent("stats", self._stats_data())
 
             if not tool_calls:
-                if web_sources:
-                    yield AgentEvent("sources", {"urls": web_sources})
                 yield AgentEvent("done", {"iteration": iteration})
                 return
 
@@ -184,14 +181,6 @@ class Agent:
                 self.stats.tool_calls += 1
                 yield AgentEvent("tool_start", {"name": name, "arguments": arguments})
                 result = await self.tools.execute(name, arguments)
-                if not result.error and name == "web_search":
-                    web_sources.extend(
-                        str(item.get("url"))
-                        for item in result.data.get("results", [])
-                        if isinstance(item, dict) and item.get("url")
-                    )
-                elif not result.error and name == "fetch_url" and result.data.get("url"):
-                    web_sources.append(str(result.data["url"]))
                 self.history.append({
                     "role": "tool",
                     "tool_name": name,
