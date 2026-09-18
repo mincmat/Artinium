@@ -6,15 +6,17 @@ import unittest
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from textual.widgets import Collapsible, Input, ListItem, Static, TextArea
+from textual.widgets import Collapsible, Input, ListItem, ListView, Static, TextArea
 
 from artium.ollama_client import ModelInfo
 from artium.model_settings import ModelSettings, ModelSettingsStore
 from artium.ui.app import (
     ArtiumApp, CommandMenu, ContextSettingsScreen, DeleteSessionScreen, EditQueueScreen,
     ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, QueueScreen, SessionScreen, StopScreen,
+    QuestionScreen,
 )
 from artium.sessions import SessionRecord
+from artium.tools import QuestionRequest
 from artium.ui.widgets import ActivityPulse, AssistantMessage, ChatLog, UserMessage, WorkspaceTree
 
 
@@ -48,6 +50,26 @@ class FakeUIClient:
 
 
 class UISmokeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_question_custom_answer_is_reachable_with_arrow_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 28)) as pilot:
+                await pilot.pause(0.15)
+                app.push_screen(QuestionScreen(QuestionRequest(
+                    question="Pick one", options=["First", "Second"],
+                )))
+                await pilot.pause(0.05)
+                choices = app.screen.query_one("#question-list", ListView)
+                answer = app.screen.query_one("#question-answer", Input)
+                self.assertIs(app.screen.focused, choices)
+                await pilot.press("down", "down")
+                self.assertIs(app.screen.focused, answer)
+                await pilot.press("up")
+                self.assertIs(app.screen.focused, choices)
+                self.assertEqual(choices.index, 1)
+
     def test_turn_duration_format(self) -> None:
         self.assertEqual(ArtiumApp._format_duration(173), "2m 53s")
 

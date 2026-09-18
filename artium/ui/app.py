@@ -1031,6 +1031,29 @@ class PermissionPromptScreen(EscapeModalScreen):
         self.dismiss("deny")
 
 
+class QuestionList(ListView):
+    """Choice list that hands keyboard navigation to the custom answer field."""
+
+    def action_cursor_down(self) -> None:
+        if self.index is not None and self.index >= len(self) - 1:
+            self.screen.query_one("#question-answer", Input).focus()
+            return
+        super().action_cursor_down()
+
+
+class QuestionAnswer(Input):
+    """Free-form answer field that can return to the choices with the keyboard."""
+
+    BINDINGS = [Binding("up", "return_to_choices", show=False, priority=True)]
+
+    def action_return_to_choices(self) -> None:
+        if self.value:
+            return
+        choices = self.screen.query_one(QuestionList)
+        choices.index = len(choices) - 1
+        choices.focus()
+
+
 class QuestionScreen(EscapeModalScreen):
     """Interactive model question with optional choices and a free-form answer."""
 
@@ -1055,11 +1078,11 @@ class QuestionScreen(EscapeModalScreen):
             yield Static("Artinium needs your input", id="question-title")
             yield Static(self.request.question, id="question-text")
             if self.request.options:
-                yield ListView(*[
+                yield QuestionList(*[
                     ListItem(Label(option), id=f"question-option-{index}")
                     for index, option in enumerate(self.request.options)
                 ], id="question-list")
-            yield Input(placeholder="Type another answer…", id="question-answer")
+            yield QuestionAnswer(placeholder="Type another answer…", id="question-answer")
             yield Static("enter answers  ·  esc cancels", id="question-help")
 
     def on_mount(self) -> None:
