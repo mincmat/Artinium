@@ -12,7 +12,7 @@ import httpx
 
 REPOSITORY = "mincmat/Artinium"
 COMMIT_URL = f"https://api.github.com/repos/{REPOSITORY}/commits/main"
-PYPROJECT_URL = f"https://raw.githubusercontent.com/{REPOSITORY}/main/pyproject.toml"
+PYPROJECT_URL = f"https://raw.githubusercontent.com/{REPOSITORY}/{{commit}}/pyproject.toml"
 INSTALLER_URL = f"https://raw.githubusercontent.com/{REPOSITORY}/main/install"
 
 
@@ -60,9 +60,12 @@ async def check_for_update(current: str) -> UpdateInfo | None:
         async with httpx.AsyncClient(timeout=4, follow_redirects=True) as client:
             commit_response = await client.get(COMMIT_URL)
             commit_response.raise_for_status()
-            project_response = await client.get(PYPROJECT_URL)
-            project_response.raise_for_status()
         latest_commit = str(commit_response.json().get("sha") or "")
+        if not latest_commit:
+            return None
+        async with httpx.AsyncClient(timeout=4, follow_redirects=True) as client:
+            project_response = await client.get(PYPROJECT_URL.format(commit=latest_commit))
+            project_response.raise_for_status()
         version_match = re.search(r'^version\s*=\s*"([^"]+)"', project_response.text, re.MULTILINE)
         latest = version_match.group(1) if version_match else ""
         return UpdateInfo(current, latest, installed_commit(), latest_commit) if latest else None
