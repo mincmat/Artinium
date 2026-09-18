@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import re
+import sys
 from dataclasses import dataclass
 
 import httpx
