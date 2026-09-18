@@ -1483,6 +1483,20 @@ class ArtiumApp(App[None]):
         if self.preferences.check_updates and isinstance(self.client, OllamaClient):
             self._update_task = asyncio.create_task(self._check_updates(announce=True))
 
+    @on(events.DescendantFocus)
+    def keep_composer_focused(self, event: events.DescendantFocus) -> None:
+        """Keep typing ready after mouse interaction with the transcript or tools."""
+        if isinstance(self.screen, ModalScreen) or event.widget.id == "prompt":
+            return
+        self.call_after_refresh(self._restore_composer_focus)
+
+    def _restore_composer_focus(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        prompt = self.query_one("#prompt", Input)
+        if not prompt.disabled:
+            prompt.focus()
+
     @on(events.Resize)
     def adapt_layout(self, event: events.Resize) -> None:
         """Keep the hierarchy useful on smaller terminal windows."""

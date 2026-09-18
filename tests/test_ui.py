@@ -306,11 +306,19 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
             app.client = FakeUIClient()  # type: ignore[assignment]
             async with app.run_test(size=(100, 30)) as pilot:
                 await pilot.pause(0.2)
-                self.assertIs(app.focused, app.query_one("#prompt", Input))
+                prompt = app.query_one("#prompt", Input)
+                self.assertIs(app.focused, prompt)
                 self.assertIn("qwen-test:8b", str(app.query_one("#model-status", Static).renderable))
                 self.assertIn("CONTEXT[/]  0%", str(app.query_one("#session-info", Static).renderable))
                 self.assertFalse(app.query_one(WorkspaceTree).can_focus)
                 self.assertFalse(app.query_one(ChatLog).can_focus)
+                chat = app.query_one("#chat", ChatLog)
+                await chat.begin_assistant()
+                await chat.add_delta("Response that was clicked with the mouse.")
+                await pilot.pause(0.05)
+                app.query_one(AssistantMessage).focus()
+                await pilot.pause(0.05)
+                self.assertIs(app.focused, prompt)
 
     async def test_session_manager_creates_and_restores_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
