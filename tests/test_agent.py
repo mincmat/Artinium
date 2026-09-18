@@ -15,6 +15,7 @@ from artium.context import ContextManager
 from artium.model_settings import ModelSettings
 from artium.ollama_client import ModelInfo, OllamaClient, OllamaError
 from artium.tools import ToolRegistry
+from artium.updater import check_for_update
 from artium.workspace import Workspace
 
 
@@ -56,6 +57,34 @@ class ThinkingClient:
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_update_check_uses_artiniums_github_source(self) -> None:
+        original_client = httpx.AsyncClient
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/commits/main"):
+                return httpx.Response(200, json={"sha": "new-revision"})
+            if request.url.path.endswith("/pyproject.toml"):
+                return httpx.Response(200, text='[project]\nversion = "0.2.1"\n')
+            return httpx.Response(404)
+
+        class MockClient:
+            def __init__(self, **_: Any) -> None:
+                self.client = original_client(transport=httpx.MockTransport(handler), base_url="https://test")
+
+            async def __aenter__(self) -> httpx.AsyncClient:
+                return self.client
+
+            async def __aexit__(self, *_: Any) -> None:
+                await self.client.aclose()
+
+        with patch("artium.updater.httpx.AsyncClient", MockClient), patch(
+            "artium.updater.installed_commit", return_value="old-revision"
+        ):
+            info = await check_for_update("0.2.1")
+        self.assertIsNotNone(info)
+        self.assertTrue(info.available)  # type: ignore[union-attr]
+        self.assertEqual(info.latest_commit, "new-revision")  # type: ignore[union-attr]
+
     async def test_ollama_client_explains_generation_timeouts(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("slow response", request=request)

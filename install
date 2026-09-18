@@ -7,6 +7,7 @@ readonly INSTALL_ROOT="${ARTINIUM_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/sha
 readonly BIN_ROOT="${ARTINIUM_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
 readonly DOWNLOAD_ROOT="${TMPDIR:-/tmp}/artinium-install.$$"
 readonly TARBALL_URL="https://github.com/${REPO}/archive/refs/heads/main.tar.gz"
+readonly COMMIT_URL="https://api.github.com/repos/${REPO}/commits/main"
 
 cleanup() { rm -rf "$DOWNLOAD_ROOT"; }
 trap cleanup EXIT
@@ -45,12 +46,22 @@ printf '\n'
 tar -xzf "$DOWNLOAD_ROOT/artinium.tar.gz" -C "$DOWNLOAD_ROOT"
 SOURCE_DIR="$(find "$DOWNLOAD_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'Artinium-*' -print -quit)"
 [ -n "$SOURCE_DIR" ] || fail "The downloaded Artinium archive was empty."
+SOURCE_VERSION="$("$PYTHON" - "$SOURCE_DIR/pyproject.toml" <<'PY'
+import re
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+print(match.group(1) if match else "unknown")
+PY
+)"
+SOURCE_COMMIT="$(curl --fail --silent --show-error "$COMMIT_URL" | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin).get("sha", ""))' || true)"
 ok "Source downloaded"
 
 step 4 "Installing isolated environment"
 "$PYTHON" -m venv "$INSTALL_ROOT/venv"
 "$INSTALL_ROOT/venv/bin/python" -m pip install --disable-pip-version-check --quiet --upgrade pip
 "$INSTALL_ROOT/venv/bin/python" -m pip install --disable-pip-version-check --quiet "$SOURCE_DIR"
+printf '{"version":"%s","commit":"%s"}\n' "$SOURCE_VERSION" "$SOURCE_COMMIT" > "$INSTALL_ROOT/install.json"
 ok "Artinium and its dependencies installed"
 
 step 5 "Adding the artinium command"

@@ -252,6 +252,24 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("enter")
                 self.assertEqual(app.model_settings.auto_compact_threshold, 90)
 
+    async def test_slash_compact_reduces_a_large_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                app.agent.history = [  # type: ignore[union-attr]
+                    {"role": "user" if index % 2 == 0 else "assistant", "content": "x" * 2_000}
+                    for index in range(10)
+                ]
+                prompt = app.query_one("#prompt", Input)
+                prompt.value = "/compact"
+                await pilot.press("enter")
+                await pilot.pause(0.05)
+                self.assertLess(len(app.agent.history), 10)  # type: ignore[union-attr]
+                self.assertIsNotNone(app.agent.last_compaction)  # type: ignore[union-attr]
+
     async def test_escape_from_menu_subsection_returns_to_actions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             app = ArtiumApp(Path(directory))

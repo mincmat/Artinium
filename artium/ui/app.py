@@ -1292,7 +1292,7 @@ class UpdateScreen(EscapeModalScreen):
         with Vertical(id="update-box"):
             yield Static("Updates", id="update-title")
             if self.info is None:
-                detail = f"Installed: {__version__}\nCould not check PyPI. You may be offline."
+                detail = f"Installed: {__version__}\nCould not reach GitHub. You may be offline."
                 actions = (("later", "Close"),)
             elif self.info.available:
                 detail = f"Installed: {self.info.current}\nAvailable: {self.info.latest}"
@@ -2117,7 +2117,7 @@ class ArtiumApp(App[None]):
             self._main_chat().write("Context compacted." + suffix, tone="warning")
             self._save_active_session()
         else:
-            self._main_chat().write("Context is already compact.")
+            self._main_chat().write("Context is already compact; there is not enough older history to reduce.")
 
     def action_context_summary(self) -> None:
         if not self.agent:
@@ -2288,7 +2288,7 @@ class ArtiumApp(App[None]):
             announce
             and self.update_info
             and self.update_info.available
-            and self.update_info.latest != self.preferences.ignored_version
+            and self.update_info.identity != self.preferences.ignored_version
             and self.is_mounted
         ):
             if len(self.screen_stack) == 1:
@@ -2303,7 +2303,7 @@ class ArtiumApp(App[None]):
 
     def _update_selected(self, choice: str | None, return_to_artinium: bool, return_to_menu: bool) -> None:
         if choice == "ignore" and self.update_info:
-            self.preferences.ignored_version = self.update_info.latest
+            self.preferences.ignored_version = self.update_info.identity
             self.preferences_store.save(self.preferences)
         elif choice == "install":
             asyncio.create_task(self._install_update())
