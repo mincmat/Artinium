@@ -41,7 +41,7 @@ class Agent:
         model: ModelInfo,
         tools: ToolRegistry,
         *,
-        max_iterations: int = 12,
+        max_iterations: int = 48,
         settings: ModelSettings | None = None,
     ):
         self.client = client
@@ -195,7 +195,7 @@ class Agent:
                 })
                 yield AgentEvent("stats", self._stats_data())
 
-        warning = f"Task stopped after {self.max_iterations} iterations to prevent a loop."
+        warning = f"Task stopped after {self.max_iterations} iterations as a safety cap. Ask it to continue if more work is still needed."
         self.history.append({"role": "assistant", "content": warning})
         yield AgentEvent("limit", {"text": warning})
 
