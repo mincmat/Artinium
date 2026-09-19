@@ -103,7 +103,7 @@ class ToolRegistry:
                     if self.authorize is None:
                         return ToolResult(name, arguments, {"cancelled": True, "reason": "permission was not granted"})
                     decision = await self.authorize(PermissionRequest(name, self._summary(name, arguments)))
-                    if decision not in {"allow_once", "always_allow"}:
+                    if decision != "allow_once":
                         return ToolResult(name, arguments, {"cancelled": True, "reason": "denied by the user"})
             snapshot = self.undo.snapshot(name, arguments)
             if name == "run_command":

@@ -7,10 +7,26 @@ from pathlib import Path
 from uuid import uuid4
 
 from .agent import SessionStats
+from .preferences import MUTATING_TOOLS, PERMISSION_VALUES
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def default_tool_permissions() -> dict[str, str]:
+    """Every session starts at ask; nothing leaks across sessions."""
+    return {name: "ask" for name in MUTATING_TOOLS}
+
+
+def sanitize_tool_permissions(data: object) -> dict[str, str]:
+    """Keep only known tools with valid values; anything else becomes ask."""
+    permissions = default_tool_permissions()
+    if isinstance(data, dict):
+        for name in permissions:
+            value = data.get(name)
+            permissions[name] = value if value in PERMISSION_VALUES else "ask"
+    return permissions
 
 
 @dataclass(slots=True)
@@ -26,6 +42,7 @@ class SessionRecord:
     draft: str = ""
     undo_records: list[dict[str, object]] = field(default_factory=list)
     model_name: str = ""
+    tool_permissions: dict[str, str] = field(default_factory=default_tool_permissions)
 
     @classmethod
     def new(cls) -> "SessionRecord":
@@ -62,6 +79,7 @@ class SessionRecord:
             draft=str(data.get("draft") or ""),
             undo_records=data.get("undo_records") if isinstance(data.get("undo_records"), list) else [],
             model_name=str(data.get("model_name") or ""),
+            tool_permissions=sanitize_tool_permissions(data.get("tool_permissions")),
         )
 
 
@@ -134,6 +152,7 @@ class SessionStore:
         draft: str | None = None,
         undo_records: list[dict[str, object]] | None = None,
         model_name: str | None = None,
+        tool_permissions: dict[str, str] | None = None,
     ) -> None:
         if not any(item.id == session.id for item in self.sessions):
             self.sessions.append(session)
@@ -153,6 +172,8 @@ class SessionStore:
             session.undo_records = undo_records
         if model_name is not None:
             session.model_name = model_name
+        if tool_permissions is not None:
+            session.tool_permissions = sanitize_tool_permissions(tool_permissions)
         self.active_session_id = session.id
         session.updated_at = _now()
         self._sort()

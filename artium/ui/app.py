@@ -403,10 +403,11 @@ class CommandMenu(EscapeModalScreen):
     ITEMS = (
         ("model", "Model", "select a model or change its settings"),
         ("sessions", "Sessions", "new, switch, rename, pin, or delete"),
+        ("permissions", "Permissions", "per-session allow, ask, or deny"),
         ("workspace", "Change workspace", "open another folder"),
         ("files", "Show / hide sidebar", "files and session information"),
         ("commands", "Commands", "slash commands and keyboard shortcuts"),
-        ("artinium", "Artinium", "themes, permissions, updates, and info"),
+        ("artinium", "Artinium", "themes, updates, and info"),
     )
 
     # Static searchable index: top-level + subsections. Intentionally excludes
@@ -419,6 +420,7 @@ class CommandMenu(EscapeModalScreen):
         ("model-context", "Context settings", "window and compaction", "context contexto ventana compactar compaction ventana"),
         ("sessions", "Sessions", "new, switch, rename, pin, or delete", "session sesion sesiones cambiar nueva renombrar"),
         ("sessions-new", "New session", "start a fresh conversation", "session sesion nueva new fresh"),
+        ("permissions", "Permissions", "per-session allow, ask, or deny", "permissions permisos herramientas session sesion"),
         ("workspace", "Change workspace", "open another folder", "workspace carpeta folder proyecto"),
         ("files", "Show / hide sidebar", "files and session information", "sidebar files archivos barra lateral mostrar ocultar"),
         ("commands", "Commands", "slash commands and keyboard shortcuts", "commands comandos slash atajos shortcuts"),
@@ -1326,6 +1328,7 @@ class PermissionPromptScreen(EscapeModalScreen):
     PermissionPromptScreen { align: center middle; background: #000000 80%; }
     #permission-prompt-box { width: 72; height: auto; padding: 1 2; background: $surface; border: none; }
     #permission-prompt-title { height: 2; color: $text; text-style: bold; }
+    #permission-prompt-scope { height: 1; color: $text-muted; margin-bottom: 1; }
     #permission-prompt-detail { height: auto; max-height: 8; padding: 1 2; background: #151515; color: $text; }
     #permission-prompt-help { height: 2; margin-top: 1; color: $text-muted; }
     #permission-prompt-list { height: auto; border: none; background: $surface; }
@@ -1340,10 +1343,11 @@ class PermissionPromptScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="permission-prompt-box"):
             yield Static(f"Allow {self.request.tool}?", id="permission-prompt-title")
+            yield Static("Session only · new sessions start at ask", id="permission-prompt-scope")
             yield Static(self.request.summary, id="permission-prompt-detail")
             yield ListView(
-                ListItem(Label("Allow once"), id="permission-allow_once"),
-                ListItem(Label("Always allow this tool"), id="permission-always_allow"),
+                ListItem(Label("Allow"), id="permission-allow"),
+                ListItem(Label("Ask"), id="permission-ask"),
                 ListItem(Label("Deny"), id="permission-deny"),
                 id="permission-prompt-list",
             )
@@ -1515,13 +1519,14 @@ class PermissionsScreen(EscapeModalScreen):
     #permissions-box { width: 66; height: auto; padding: 1 2; background: $surface; border: none; }
     #permissions-title { height: 2; color: $text; text-style: bold; }
     #permissions-help { height: 1; color: $text-muted; margin-bottom: 1; }
+    #permissions-scope { height: 1; color: $text-muted; margin-top: 1; }
     .permission-row { height: 3; padding: 1; color: $text; }
     .permission-row.-selected { background: #303030; color: #ffffff; }
     """
 
-    def __init__(self, preferences: AppPreferences, on_change: Callable[[], None]):
+    def __init__(self, session: SessionRecord, on_change: Callable[[], None]):
         super().__init__()
-        self.preferences = preferences
+        self.session = session
         self.on_change = on_change
         self.selected = 0
 
@@ -1531,22 +1536,26 @@ class PermissionsScreen(EscapeModalScreen):
             yield Static("←→ change", id="permissions-help")
             for tool in MUTATING_TOOLS:
                 yield Static("", id=f"policy-{tool}", classes="permission-row", markup=True)
+            yield Static(
+                "Session only · new sessions start at ask · reads always allowed",
+                id="permissions-scope",
+            )
 
     def on_mount(self) -> None:
         self._refresh()
 
     def _refresh(self) -> None:
         for index, tool in enumerate(MUTATING_TOOLS):
-            value = self.preferences.tool_permissions.get(tool, "ask").capitalize()
+            value = self.session.tool_permissions.get(tool, "ask").capitalize()
             row = self.query_one(f"#policy-{tool}", Static)
             row.update(f"{self.LABELS[tool]:<28}[#dedede]{value}[/]")
             row.set_class(index == self.selected, "-selected")
 
     def _change(self, direction: int) -> None:
         tool = MUTATING_TOOLS[self.selected]
-        current = self.preferences.tool_permissions.get(tool, "ask")
+        current = self.session.tool_permissions.get(tool, "ask")
         index = PERMISSION_VALUES.index(current) if current in PERMISSION_VALUES else 0
-        self.preferences.tool_permissions[tool] = PERMISSION_VALUES[(index + direction) % len(PERMISSION_VALUES)]
+        self.session.tool_permissions[tool] = PERMISSION_VALUES[(index + direction) % len(PERMISSION_VALUES)]
         self.on_change()
         self._refresh()
 
@@ -1867,7 +1876,7 @@ class ArtiumApp(App[None]):
                 self.confirm_command,
                 authorize=self.authorize_tool,
                 ask_question=self.ask_question,
-                permission_policy=lambda name: self.preferences.tool_permissions.get(name, "ask"),
+                permission_policy=self._session_permission,
                 undo=self.undo_manager,
             )
             self.agent = Agent(self.client, model, tools, settings=self.model_settings)
@@ -2325,10 +2334,20 @@ class ArtiumApp(App[None]):
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
 
         def answer(value: str | None) -> None:
+            # The modal sets the session rule; only "allow" approves this run.
             decision = value or "deny"
-            if decision == "always_allow":
-                self.preferences.tool_permissions[request.tool] = "allow"
-                self.preferences_store.save(self.preferences)
+            session = self.active_session
+            if session is not None and request.tool in MUTATING_TOOLS:
+                if decision == "allow":
+                    session.tool_permissions[request.tool] = "allow"
+                    self._save_active_session()
+                    decision = "allow_once"
+                elif decision == "ask":
+                    session.tool_permissions[request.tool] = "ask"
+                    self._save_active_session()
+                    decision = "deny"
+            elif decision == "allow":
+                decision = "allow_once"
             if not future.done():
                 future.set_result(decision)
 
@@ -2667,6 +2686,8 @@ class ArtiumApp(App[None]):
             self.action_sessions(return_to_menu=True)
         elif command == "sessions-new":
             self._menu_new_session()
+        elif command == "permissions":
+            self.action_permissions(return_to_menu=True)
         elif command == "workspace":
             self.action_workspace(return_to_menu=True)
         elif command == "files":
@@ -2675,11 +2696,9 @@ class ArtiumApp(App[None]):
             self.action_commands(return_to_menu=True)
         elif command == "artinium":
             self.action_artinium(return_to_menu=True)
-        elif command in {"themes", "permissions", "updates"}:
+        elif command in {"themes", "updates"}:
             if command == "themes":
                 self.action_themes()
-            elif command == "permissions":
-                self.action_permissions()
             else:
                 self.action_updates()
         elif command == "undo":
@@ -2731,10 +2750,26 @@ class ArtiumApp(App[None]):
         elif return_to_menu:
             self.action_menu()
 
+    def _session_permission(self, name: str) -> str:
+        if self.active_session is None:
+            return "ask"
+        return self.active_session.tool_permissions.get(name, "ask")
+
     def action_permissions(self, *, return_to_artinium: bool = False, return_to_menu: bool = False) -> None:
+        if self._generation_task and not self._generation_task.done():
+            self._main_chat().write(
+                "Permissions are available after the current task finishes.", tone="warning"
+            )
+            return
+        if self.active_session is None:
+            return
         self.push_screen(
-            PermissionsScreen(self.preferences, lambda: self.preferences_store.save(self.preferences)),
-            lambda _: self.action_artinium(return_to_menu=return_to_menu) if return_to_artinium else None,
+            PermissionsScreen(self.active_session, self._save_active_session),
+            lambda _: (
+                self.action_artinium(return_to_menu=return_to_menu)
+                if return_to_artinium
+                else self.action_menu() if return_to_menu else None
+            ),
         )
 
     def action_themes(self, *, return_to_artinium: bool = False, return_to_menu: bool = False) -> None:

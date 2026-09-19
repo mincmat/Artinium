@@ -17,7 +17,7 @@ from artium.ui.app import (
     QuestionScreen, _search_matches, _system_lines, _system_load, _system_memory,
 )
 from artium.sessions import SessionRecord
-from artium.tools import QuestionRequest
+from artium.tools import PermissionRequest, QuestionRequest
 from artium.ui.widgets import ActivityPulse, AssistantMessage, ChatLog, ThinkingBlock, UserMessage, WorkspaceTree
 
 
@@ -675,6 +675,100 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
         for line in _system_lines().splitlines():
             # Sidebar content is 24 chars wide; keep rows short, markup excluded.
             self.assertLessEqual(len(line.replace("[dim]", "").replace("[/]", "")), 24)
+
+    def test_session_permissions_default_to_ask_and_sanitize(self) -> None:
+        record = SessionRecord.new()
+        self.assertEqual(
+            record.tool_permissions,
+            {"write_file": "ask", "edit_file": "ask", "run_command": "ask"},
+        )
+        dirty = SessionRecord.from_data({
+            "id": "x",
+            "tool_permissions": {"write_file": "allow", "edit_file": "nope", "other": "allow"},
+        })
+        assert dirty is not None
+        self.assertEqual(
+            dirty.tool_permissions,
+            {"write_file": "allow", "edit_file": "ask", "run_command": "ask"},
+        )
+
+    def test_session_permissions_are_isolated_and_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            from artium.sessions import SessionStore
+            store = SessionStore(Path(directory))
+            first = SessionRecord.new()
+            second = SessionRecord.new()
+            store.sessions = [first, second]
+            store.active_session_id = first.id
+            first.tool_permissions["write_file"] = "allow"
+            store.save()
+            reloaded = SessionStore(Path(directory))
+            reloaded.load()
+            maps = {s.id: s.tool_permissions for s in reloaded.sessions}
+            self.assertEqual(maps[first.id]["write_file"], "allow")
+            self.assertEqual(maps[second.id]["write_file"], "ask")
+
+    async def test_permissions_page_edits_the_active_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                self.assertIsNotNone(app.active_session)
+                app.action_permissions()
+                await pilot.pause(0.2)
+                from artium.ui.app import PermissionsScreen
+                self.assertIsInstance(app.screen, PermissionsScreen)
+                self.assertIn("Session only", str(app.screen.query_one("#permissions-scope", Static).renderable))
+                await pilot.press("right")
+                await pilot.pause(0.1)
+                assert app.active_session is not None
+                self.assertEqual(app.active_session.tool_permissions["write_file"], "allow")
+                await pilot.press("escape")
+                await pilot.pause(0.1)
+                self.assertEqual(app.active_session.tool_permissions["write_file"], "allow")
+
+    async def test_authorize_modal_sets_the_session_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                assert app.active_session is not None
+                task = asyncio.create_task(app.authorize_tool(PermissionRequest("write_file", "demo.py")))
+                await pilot.pause(0.2)
+                from artium.ui.app import PermissionPromptScreen
+                self.assertIsInstance(app.screen, PermissionPromptScreen)
+                app.screen.dismiss("allow")
+                self.assertEqual(await task, "allow_once")
+                self.assertEqual(app.active_session.tool_permissions["write_file"], "allow")
+                task = asyncio.create_task(app.authorize_tool(PermissionRequest("edit_file", "demo.py")))
+                await pilot.pause(0.2)
+                app.screen.dismiss("ask")
+                self.assertEqual(await task, "deny")
+                self.assertEqual(app.active_session.tool_permissions["edit_file"], "ask")
+                task = asyncio.create_task(app.authorize_tool(PermissionRequest("run_command", "ls")))
+                await pilot.pause(0.2)
+                app.screen.dismiss("deny")
+                self.assertEqual(await task, "deny")
+                self.assertEqual(app.active_session.tool_permissions["run_command"], "ask")
+
+    async def test_menu_offers_permissions_as_top_level_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                await pilot.press("ctrl+p")
+                await pilot.pause(0.2)
+                self.assertIsNotNone(app.screen.query_one("#command-permissions", ListItem))
+                app._menu_selected("permissions")
+                await pilot.pause(0.2)
+                from artium.ui.app import PermissionsScreen
+                self.assertIsInstance(app.screen, PermissionsScreen)
 
     def test_global_search_matches_subsections_across_languages(self) -> None:
         self.assertTrue(_search_matches("contexto", "Context settings", "window and compaction", "context contexto"))
