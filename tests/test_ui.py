@@ -13,7 +13,7 @@ from artium.model_settings import ModelSettings, ModelSettingsStore
 from artium.ui.app import (
     ArtiumApp, CommandMenu, ContextSettingsScreen, DeleteSessionScreen, EditQueueScreen,
     ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, QueueScreen, SessionScreen, StopScreen,
-    QuestionScreen, _search_matches,
+    QuestionScreen, _search_matches, _system_lines, _system_load, _system_memory,
 )
 from artium.sessions import SessionRecord
 from artium.tools import QuestionRequest
@@ -658,6 +658,20 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("ctrl+n")
                 await pilot.pause(0.2)
                 self.assertEqual(results, ["new"])
+
+    def test_sidebar_system_lines_stay_compact(self) -> None:
+        memory = _system_memory()
+        if memory is not None:
+            used_gb, total_gb = memory
+            self.assertGreater(total_gb, 0)
+            self.assertGreaterEqual(used_gb, 0)
+            self.assertLessEqual(used_gb, total_gb)
+        load = _system_load()
+        if load is not None:
+            self.assertGreaterEqual(load, 0)
+        for line in _system_lines().splitlines():
+            # Sidebar content is 24 chars wide; keep rows short, markup excluded.
+            self.assertLessEqual(len(line.replace("[dim]", "").replace("[/]", "")), 24)
 
     def test_global_search_matches_subsections_across_languages(self) -> None:
         self.assertTrue(_search_matches("contexto", "Context settings", "window and compaction", "context contexto"))

@@ -44,6 +44,50 @@ def _normalize_search(text: str) -> str:
     return "".join(char for char in folded if not unicodedata.combining(char))
 
 
+def _system_memory() -> tuple[float, float] | None:
+    """System RAM as (used_gb, total_gb) via /proc; None when unavailable.
+
+    Deliberately no psutil dependency: a single tiny file read per topbar
+    refresh, which already happens on stats/model/session changes.
+    """
+    try:
+        total = available = 0
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemTotal:"):
+                total = int(line.split()[1])  # kB
+            elif line.startswith("MemAvailable:"):
+                available = int(line.split()[1])
+            if total and available:
+                break
+    except (OSError, ValueError, IndexError):
+        return None
+    if not total:
+        return None
+    return ((total - available) / 1024**2, total / 1024**2)
+
+
+def _system_load() -> float | None:
+    """1-minute load average; None when unavailable."""
+    try:
+        return os.getloadavg()[0]
+    except OSError:
+        return None
+
+
+def _system_lines() -> str:
+    """Extra sidebar rows (RAM + load), kept within the 24-char content width."""
+    lines = ""
+    memory = _system_memory()
+    if memory:
+        used_gb, total_gb = memory
+        percent = round(used_gb / total_gb * 100) if total_gb else 0
+        lines += f"\n[dim]RAM[/]    {percent}% {used_gb:.1f}/{total_gb:.1f}G"
+    load = _system_load()
+    if load is not None:
+        lines += f"\n[dim]LOAD[/]   {load:.2f}"
+    return lines
+
+
 def _search_matches(query: str, *haystacks: str) -> bool:
     """Substring or bidirectional prefix match per word (EN/ES tolerant)."""
     q = _normalize_search(query).strip()
@@ -147,10 +191,11 @@ class ModelHubScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="model-hub-box"):
             yield Static("Model", id="model-hub-title")
-            yield Static(
-                "Change model applies after this task" if self.working else "↑↓ select  ·  enter open  ·  esc back",
-                id="model-hub-help",
-            )
+            if self.working:
+                yield Static(
+                    "Change model applies after this task",
+                    id="model-hub-help",
+                )
             yield ListView(
                 ListItem(Label("Change model\n[dim]Select a detected model[/]"), id="model-hub-change"),
                 ListItem(
@@ -230,7 +275,6 @@ class ModelScreen(EscapeModalScreen):
         with Vertical(id="model-box"):
             yield Label("Select model", classes="modal-title")
             yield Input(placeholder="Type to filter models…  e.g. qwen", id="model-search")
-            yield Label("↑↓ navigate  ·  type filters  ·  enter selects  ·  esc goes back", classes="modal-help")
             yield ListView(*[
                 ListItem(Label(
                     model.name + f"\n[dim]{self._capabilities(model)}[/]"
@@ -383,10 +427,8 @@ class CommandMenu(EscapeModalScreen):
         with Vertical(id="command-menu"):
             yield Static("Menu", id="command-title")
             yield Input(placeholder="Type to search…  e.g. contexto", id="command-search")
-            help_text = "↑↓ navigate  ·  type filters  ·  enter select  ·  esc close"
             if self.working:
-                help_text = "Model selection and the sidebar remain available"
-            yield Static(help_text, id="command-help")
+                yield Static("Model selection and the sidebar remain available", id="command-help")
             yield ListView(*self._build_items(""), id="command-list")
 
     def _build_items(self, query: str) -> list[ListItem]:
@@ -508,7 +550,7 @@ class ModelSettingsScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="settings-box"):
             yield Static("Model settings", id="settings-title")
-            yield Static("↑↓ select  ·  enter / ←→ change  ·  r reset  ·  esc close", id="settings-help")
+            yield Static("←→ change  ·  R reset", id="settings-help")
             for field in self._fields:
                 yield Static("", id=f"setting-{field}", classes="setting-row", markup=True)
 
@@ -609,7 +651,6 @@ class AutoCompactScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="auto-compact-box"):
             yield Static("Auto compact", id="auto-compact-title")
-            yield Static("↑↓ select  ·  enter apply  ·  esc close", id="auto-compact-help")
             yield ListView(*[
                 ListItem(
                     Label(
@@ -676,7 +717,7 @@ class ContextSettingsScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="context-settings-box"):
             yield Static("Context settings", id="context-settings-title")
-            yield Static("↑↓ select  ·  enter / ←→ change  ·  r reset  ·  esc back", id="context-settings-help")
+            yield Static("←→ change  ·  R reset", id="context-settings-help")
             for field in self._fields:
                 yield Static("", id=f"context-{field}", classes="context-setting-row", markup=True)
 
@@ -809,7 +850,7 @@ class SessionScreen(EscapeModalScreen):
     #session-title { height: 2; color: $text; text-style: bold; }
     #session-search { margin-bottom: 1; border: tall #333333; background: $background; }
     #session-search:focus { border: tall #a0a0a0; }
-    #session-help { height: 2; color: $text-muted; margin-bottom: 1; }
+    #session-help { height: 1; color: $text-muted; margin-bottom: 1; }
     #session-list { height: auto; max-height: 20; background: $surface; border: none; }
     #session-list:focus { border: none; }
     #session-list ListItem { height: 3; padding: 1; color: #bdbdbd; background: $surface; }
@@ -877,7 +918,7 @@ class SessionScreen(EscapeModalScreen):
         with Vertical(id="session-box"):
             yield Static("Sessions", id="session-title")
             yield Input(placeholder="Type to filter sessions…", id="session-search")
-            yield Static("↑↓ navigate  ·  type filters  ·  enter switches\n^N new  ·  ^R rename  ·  ^S pin  ·  ^X delete  ·  esc back", id="session-help")
+            yield Static("^N new  ·  ^R rename  ·  ^S pin  ·  ^X delete", id="session-help")
             yield ListView(*self._entries(self.sessions, grouped=True), id="session-list")
 
     def on_mount(self) -> None:
@@ -1020,7 +1061,7 @@ class QueueScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="queue-box"):
             yield Static("Queued messages", id="queue-title")
-            yield Static("↑↓ select  ·  enter edit  ·  d delete  ·  esc close", id="queue-help")
+            yield Static("D delete", id="queue-help")
             yield ListView(*[
                 ListItem(Label(f"{index}.  {prompt}"), id=f"queue-{index - 1}")
                 for index, prompt in enumerate(self.prompts, 1)
@@ -1066,7 +1107,6 @@ class EditQueueScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="edit-queue-box"):
             yield Static("Edit queued message", id="edit-queue-title")
-            yield Static("enter saves  ·  esc cancels", id="edit-queue-help")
             yield Input(value=self.prompt, id="edit-queue-input")
 
     def on_mount(self) -> None:
@@ -1103,7 +1143,6 @@ class ChangeHistoryScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="changes-box"):
             yield Static("Changes", id="changes-title")
-            yield Static("enter reverts the newest change  ·  esc back", id="changes-help")
             if not self.records:
                 yield Static("No file changes in this session.")
                 return
@@ -1286,7 +1325,6 @@ class PermissionPromptScreen(EscapeModalScreen):
         with Vertical(id="permission-prompt-box"):
             yield Static(f"Allow {self.request.tool}?", id="permission-prompt-title")
             yield Static(self.request.summary, id="permission-prompt-detail")
-            yield Static("↑↓ choose  ·  enter confirm  ·  esc deny", id="permission-prompt-help")
             yield ListView(
                 ListItem(Label("Allow once"), id="permission-allow_once"),
                 ListItem(Label("Always allow this tool"), id="permission-always_allow"),
@@ -1358,7 +1396,6 @@ class QuestionScreen(EscapeModalScreen):
                     for index, option in enumerate(self.request.options)
                 ], id="question-list")
             yield QuestionAnswer(placeholder="Type another answer…", id="question-answer")
-            yield Static("enter answers  ·  esc cancels", id="question-help")
 
     def on_mount(self) -> None:
         if self.request.options:
@@ -1408,7 +1445,6 @@ class CommandsScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="commands-box"):
             yield Static("Commands", id="commands-title")
-            yield Static("enter runs  ·  esc back", id="commands-help")
             yield ListView(*[
                 ListItem(Label(f"{command}\n[dim]{description}[/]"), id=f"slash-{index}")
                 for index, (command, description) in enumerate(self.COMMANDS)
@@ -1462,7 +1498,7 @@ class PermissionsScreen(EscapeModalScreen):
     PermissionsScreen { align: center middle; background: #000000 75%; }
     #permissions-box { width: 66; height: auto; padding: 1 2; background: $surface; border: none; }
     #permissions-title { height: 2; color: $text; text-style: bold; }
-    #permissions-help { height: 2; color: $text-muted; }
+    #permissions-help { height: 1; color: $text-muted; margin-bottom: 1; }
     .permission-row { height: 3; padding: 1; color: $text; }
     .permission-row.-selected { background: #303030; color: #ffffff; }
     """
@@ -1476,7 +1512,7 @@ class PermissionsScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="permissions-box"):
             yield Static("Tool permissions", id="permissions-title")
-            yield Static("↑↓ select  ·  enter / ←→ change  ·  esc back", id="permissions-help")
+            yield Static("←→ change", id="permissions-help")
             for tool in MUTATING_TOOLS:
                 yield Static("", id=f"policy-{tool}", classes="permission-row", markup=True)
 
@@ -1530,7 +1566,6 @@ class ThemeScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="theme-box"):
             yield Static("Theme", id="theme-title")
-            yield Static("enter applies  ·  esc back", id="theme-help")
             yield ListView(*[
                 ListItem(Label(f"{'●  ' if theme == self.current else '   '}{theme}"), id=f"theme-{index}")
                 for index, theme in enumerate(self.themes)
@@ -1598,7 +1633,7 @@ class InfoScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="info-box"):
             yield Static("Artinium", id="info-title")
-            yield Static(f"Version {__version__}\nLocal coding agent for Ollama\n\nEsc returns", id="info-detail")
+            yield Static(f"Version {__version__}\nLocal coding agent for Ollama", id="info-detail")
 
 
 class ArtiumApp(App[None]):
@@ -1750,7 +1785,7 @@ class ArtiumApp(App[None]):
             with Vertical(id="sidebar"):
                 yield Static("Files", id="files-label")
                 yield WorkspaceTree(str(self.workspace.root), id="tree")
-                yield Static("[bold]New session[/]\n\n[dim]CONTEXT[/]  0%\n[dim]TOKENS[/]   0 / —\n[dim]TOOLS[/]    0", id="session-info", markup=True)
+                yield Static("[bold]New session[/]\n\n[dim]CONTEXT[/]  0%\n[dim]TOKENS[/]   0 / —\n[dim]TOOLS[/]    0" + _system_lines(), id="session-info", markup=True)
             with Vertical(id="chat-column"):
                 yield ChatLog(id="chat")
                 with Vertical(id="composer-shell"):
@@ -2317,6 +2352,7 @@ class ArtiumApp(App[None]):
             f"[dim]CONTEXT[/]  {context_percent}%\n"
             f"[dim]TOKENS[/]   {used:,} / {limit:,}\n"
             f"[dim]TOOLS[/]    {calls}"
+            + _system_lines()
         )
 
     def _main_static(self, selector: str) -> Static:
