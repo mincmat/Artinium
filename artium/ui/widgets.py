@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +84,7 @@ class ThinkingBlock(Collapsible):
     def __init__(self) -> None:
         self._detail = Static("", markup=False, id="thinking-detail-body", classes="thinking-detail")
         self._active = True
+        self._started = time.monotonic()
         super().__init__(
             self._detail,
             title="Thinking…",
@@ -90,6 +92,14 @@ class ThinkingBlock(Collapsible):
             classes="thinking-block",
         )
         self.tooltip = "Click to show the model's reasoning."
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        total = max(0, round(seconds))
+        minutes, remaining = divmod(total, 60)
+        if minutes:
+            return f"{minutes}m {remaining}s"
+        return f"{remaining}s"
 
     def on_mount(self) -> None:
         self.set_interval(0.09, self._tick)
@@ -101,8 +111,11 @@ class ThinkingBlock(Collapsible):
             self._render_title()
 
     def _render_title(self) -> None:
-        icon = self.FRAMES[self.frame] if self._active else "◇"
-        self.title = f"{icon}  Thinking"
+        if self._active:
+            self.title = f"{self.FRAMES[self.frame]}  Thinking"
+        else:
+            elapsed = self._format_duration(time.monotonic() - self._started)
+            self.title = f"◇  Thought  ·  {elapsed}"
 
     def append(self, text: str) -> None:
         self._detail.update(f"{self._detail.renderable}{text}")

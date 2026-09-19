@@ -354,7 +354,9 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(block.collapsed)
                 self.assertIn("First thought. Second thought.", str(block.query_one("#thinking-detail-body", Static).renderable))
                 chat.finish_thinking()
-                self.assertIn("Thinking", block.title)
+                self.assertIn("Thought", block.title)
+                self.assertNotIn("Thinking", block.title)
+                self.assertRegex(block.title, r"·\s+\d+m \d+s|\d+s$")
 
     async def test_session_manager_creates_and_restores_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
