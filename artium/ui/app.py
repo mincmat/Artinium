@@ -1484,7 +1484,6 @@ class ArtiniumScreen(EscapeModalScreen):
         ("info", "About Artinium", "version and runtime information"),
         ("updates", "Updates", "check or install a newer version"),
         ("themes", "Themes", "automatic, dark, and light themes"),
-        ("permissions", "Tool permissions", "ask, allow, or deny mutations"),
     )
     CSS = """
     ArtiniumScreen { align: center middle; background: #000000 75%; }
@@ -2745,8 +2744,6 @@ class ArtiumApp(App[None]):
             self.action_updates(return_to_artinium=True, return_to_menu=return_to_menu)
         elif choice == "themes":
             self.action_themes(return_to_artinium=True, return_to_menu=return_to_menu)
-        elif choice == "permissions":
-            self.action_permissions(return_to_artinium=True, return_to_menu=return_to_menu)
         elif return_to_menu:
             self.action_menu()
 
@@ -2755,7 +2752,7 @@ class ArtiumApp(App[None]):
             return "ask"
         return self.active_session.tool_permissions.get(name, "ask")
 
-    def action_permissions(self, *, return_to_artinium: bool = False, return_to_menu: bool = False) -> None:
+    def action_permissions(self, *, return_to_menu: bool = False) -> None:
         if self._generation_task and not self._generation_task.done():
             self._main_chat().write(
                 "Permissions are available after the current task finishes.", tone="warning"
@@ -2765,11 +2762,7 @@ class ArtiumApp(App[None]):
             return
         self.push_screen(
             PermissionsScreen(self.active_session, self._save_active_session),
-            lambda _: (
-                self.action_artinium(return_to_menu=return_to_menu)
-                if return_to_artinium
-                else self.action_menu() if return_to_menu else None
-            ),
+            lambda _: self.action_menu() if return_to_menu else None,
         )
 
     def action_themes(self, *, return_to_artinium: bool = False, return_to_menu: bool = False) -> None:
