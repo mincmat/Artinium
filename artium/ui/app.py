@@ -1641,9 +1641,6 @@ class ArtiumApp(App[None]):
         background: $bg; border: none;
     }
     .assistant-message:focus { border: none; }
-    .assistant-message .text-area--cursor { background: transparent; }
-    .assistant-message .text-area--cursor-line { background: transparent; }
-    .assistant-message .text-area--selection { background: #3b3b3b; }
     .system-notice { width: 1fr; height: auto; margin: 0 0 1 0; padding: 0; color: #666666; background: $bg; border: none; }
     .system-notice.-warning { color: $text-muted; }
     .system-notice.-error { color: $text; text-style: bold; }

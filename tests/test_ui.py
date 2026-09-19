@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from textual.widgets import Collapsible, Input, ListItem, ListView, Static, TextArea
+from textual.widgets import Collapsible, Input, ListItem, ListView, Static
 
 from artium.ollama_client import ModelInfo
 from artium.model_settings import ModelSettings, ModelSettingsStore
@@ -131,7 +131,7 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(app.query(Collapsible)), 1)
                 self.assertEqual(app.active_session.title, "lee sample.txt")  # type: ignore[union-attr]
                 response = app.query_one(AssistantMessage)
-                self.assertIsInstance(response, TextArea)
+                self.assertIsInstance(response, AssistantMessage)
                 self.assertTrue(response.read_only)
                 self.assertTrue(any("Listo." in item.text for item in app.query(AssistantMessage)))
 
@@ -615,6 +615,24 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(prompt.value, "second message")
                 await pilot.press("down")
                 self.assertEqual(prompt.value, "unfinished draft")
+
+    async def test_assistant_renders_markdown_bold_lists_and_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                chat = app.query_one("#chat", ChatLog)
+                await chat.begin_assistant()
+                source = "**negrita**\n\n- item 1\n- item 2\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+                await chat.add_delta(source)
+                await pilot.pause(0.2)
+                from textual.widgets import Markdown as _Markdown
+
+                message = app.query_one(AssistantMessage)
+                self.assertIsInstance(message, _Markdown)
+                self.assertEqual(message.text, source)
 
     def test_global_search_matches_subsections_across_languages(self) -> None:
         self.assertTrue(_search_matches("contexto", "Context settings", "window and compaction", "context contexto"))

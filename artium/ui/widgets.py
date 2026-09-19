@@ -7,7 +7,8 @@ from typing import Any
 from rich.markup import escape
 from textual.containers import VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import Collapsible, DirectoryTree, Static, TextArea
+from textual.widget import Widget
+from textual.widgets import Collapsible, DirectoryTree, Markdown, Static
 
 from ..workspace import IGNORED_DIRS
 
@@ -126,32 +127,35 @@ class UserMessage(Static):
         super().__init__(escape(text), classes="message user-message", markup=True)
 
 
-class AssistantMessage(TextArea):
-    """A read-only response that supports native mouse selection and copying."""
+class AssistantMessage(Markdown):
+    """A read-only response with real markdown: bold, lists, code, tables.
+
+    Previously a plain TextArea, so ``**bold**`` showed literally.
+    Textual's Markdown renders like OpenCode (headings, bold/italic,
+    lists, quotes, code blocks, comparison tables) with no new deps.
+    """
+
+    can_focus = False
 
     def __init__(self):
         super().__init__(
             "",
-            read_only=True,
-            soft_wrap=True,
             classes="message assistant-message",
         )
+        self._source = ""
 
-    def on_mount(self) -> None:
-        self.cursor_blink = False
-        self.call_after_refresh(self._fit_height)
+    @property
+    def text(self) -> str:
+        """Raw markdown source (compat for tests and session restore)."""
+        return self._source
+
+    @property
+    def read_only(self) -> bool:
+        return True
 
     async def set_markdown(self, text: str) -> None:
-        self.load_text(text)
-        self.call_after_refresh(self._fit_height)
-
-    def on_resize(self) -> None:
-        self.call_after_refresh(self._fit_height)
-
-    def _fit_height(self) -> None:
-        """Size to the soft-wrapped document instead of becoming a scroll box."""
-        self.wrapped_document.wrap(max(1, self.wrap_width), tab_width=self.indent_width)
-        self.styles.height = max(1, len(self.wrapped_document._offset_to_line_info))
+        self._source = text
+        await self.update(text)
 
 
 class SystemNotice(Static):
@@ -193,7 +197,7 @@ class ChatLog(VerticalScroll):
         "fetch_url": "↗",
     }
 
-    def _mount_animated(self, widget: Static | Collapsible) -> None:
+    def _mount_animated(self, widget: Widget) -> None:
         widget.styles.opacity = 0.0
         self.mount(widget)
         self.call_after_refresh(widget.styles.animate, "opacity", 1.0, duration=0.22, easing="out_cubic")
