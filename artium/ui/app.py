@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import time
+import unicodedata
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable
@@ -37,6 +38,37 @@ from .widgets import ChatLog, WorkspaceTree
 CONTEXT_WINDOWS = (None, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576)
 
 
+def _normalize_search(text: str) -> str:
+    """Lowercase + strip accents so 'contexto' matches 'context' settings."""
+    folded = unicodedata.normalize("NFKD", text.lower())
+    return "".join(char for char in folded if not unicodedata.combining(char))
+
+
+def _search_matches(query: str, *haystacks: str) -> bool:
+    """Substring or bidirectional prefix match per word (EN/ES tolerant)."""
+    q = _normalize_search(query).strip()
+    if not q:
+        return True
+    hay = " ".join(_normalize_search(h) for h in haystacks)
+    if q in hay:
+        return True
+    q_words = q.split()
+    hay_words = hay.split()
+    for qw in q_words:
+        matched = False
+        for hw in hay_words:
+            if qw in hw or hw in qw or hw.startswith(qw[:4]) or qw.startswith(hw[:4]):
+                # The [:4] prefix rule makes 'contexto' match 'context',
+                # 'modelo' match 'model', 'sesion' match 'sessions', etc.
+                # Guard against tiny words matching everything.
+                if len(qw) >= 3 and len(hw) >= 3:
+                    matched = True
+                    break
+        if not matched:
+            return False
+    return True
+
+
 class PromptInput(Input):
     """Input that keeps terminal-style history navigation local to the composer."""
 
@@ -59,11 +91,26 @@ class PromptInput(Input):
             super()._on_paste(event)
             return
         if replacement:
-            selection = self.selection
-            if selection.is_empty:
+            # OpenCode-style: never concatenate tokens with surrounding text.
+            # Ensure a single space around the inserted pills, e.g.
+            # "foo'/path.png'bar" -> "foo [Image 1] bar" instead of "foo[Image 1]bar".
+            text = replacement
+            try:
+                selection = self.selection
+                if selection.is_empty:
+                    cursor = self.cursor_position
+                    current = self.value
+                    before = current[:cursor]
+                    after = current[cursor:]
+                    if before and not before[-1].isspace() and not text[:1].isspace():
+                        text = " " + text
+                    if after and not after[:1].isspace() and not text[-1:].isspace():
+                        text = text + " "
+                    self.insert_text_at_cursor(text)
+                else:
+                    self.replace(text, *selection)
+            except Exception:
                 self.insert_text_at_cursor(replacement)
-            else:
-                self.replace(replacement, *selection)
         event.stop()
 
 
@@ -142,7 +189,9 @@ class ModelScreen(EscapeModalScreen):
     }
     .modal-kicker { color: $text-muted; height: 1; }
     .modal-title { color: $text; text-style: bold; height: 2; }
-    .modal-help { color: #666666; margin-bottom: 1; height: 2; }
+    .modal-help { color: #666666; margin-bottom: 1; height: 1; }
+    #model-search { margin-bottom: 1; border: tall #333333; background: $background; }
+    #model-search:focus { border: tall #a0a0a0; }
     #model-list { height: auto; max-height: 18; background: $surface; border: none; }
     #model-list:focus { border: none; }
     #model-list ListItem { height: 4; padding: 1; color: $text-muted; background: $surface; }
@@ -157,6 +206,7 @@ class ModelScreen(EscapeModalScreen):
         self.models = models
         self.current = current
         self.pending = pending
+        self._filtered: list[ModelInfo] = list(models)
 
     @staticmethod
     def _capabilities(model: ModelInfo) -> str:
@@ -179,45 +229,109 @@ class ModelScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="model-box"):
             yield Label("Select model", classes="modal-title")
-            yield Label("enter selects · esc goes back", classes="modal-help")
+            yield Input(placeholder="Type to filter models…  e.g. qwen", id="model-search")
+            yield Label("↑↓ navigate  ·  type filters  ·  enter selects  ·  esc goes back", classes="modal-help")
             yield ListView(*[
                 ListItem(Label(
                     model.name + f"\n[dim]{self._capabilities(model)}[/]"
                 ), id=f"model-{index}")
-                for index, model in enumerate(self.models)
+                for index, model in enumerate(self._filtered)
             ], id="model-list")
 
     def on_mount(self) -> None:
         box = self.query_one("#model-box")
         box.styles.opacity = 0.0
         box.styles.animate("opacity", 1.0, duration=0.18, easing="out_cubic")
-        view = self.query_one("#model-list", ListView)
-        view.focus()
+        self.query_one("#model-search", Input).focus()
+        self._select_current()
+
+    def _select_current(self) -> None:
+        try:
+            view = self.query_one("#model-list", ListView)
+        except Exception:
+            return
         selected = self.pending or self.current
-        if selected in [model.name for model in self.models]:
-            view.index = next(index for index, model in enumerate(self.models) if model.name == selected)
+        names = [model.name for model in self._filtered]
+        if selected in names:
+            view.index = names.index(selected)
+        elif names:
+            view.index = 0
+
+    async def _rebuild_models(self, query: str) -> None:
+        q = _normalize_search(query)
+        if q:
+            self._filtered = [m for m in self.models if q in _normalize_search(m.name)]
+        else:
+            self._filtered = list(self.models)
+        view = self.query_one("#model-list", ListView)
+        await view.clear()
+        for index, model in enumerate(self._filtered):
+            await view.append(
+                ListItem(
+                    Label(model.name + f"\n[dim]{self._capabilities(model)}[/]"),
+                    id=f"model-{index}",
+                )
+            )
+        self._select_current()
+
+    @on(Input.Changed, "#model-search")
+    async def _filter_changed(self, event: Input.Changed) -> None:
+        await self._rebuild_models(event.value)
+
+    @on(Input.Submitted, "#model-search")
+    def _filter_submitted(self, event: Input.Submitted) -> None:
+        view = self.query_one("#model-list", ListView)
+        item = view.highlighted_child
+        if item is not None and item.id:
+            try:
+                self.dismiss(self._filtered[int(item.id.removeprefix("model-"))].name)
+                return
+            except (ValueError, IndexError):
+                pass
+        if len(self._filtered) == 1:
+            self.dismiss(self._filtered[0].name)
+
+    def _move_highlight(self, direction: int) -> None:
+        try:
+            view = self.query_one("#model-list", ListView)
+        except Exception:
+            return
+        if not self._filtered:
+            return
+        view.index = (view.index + direction) % len(self._filtered)
+
+    def key_up(self) -> None:
+        self._move_highlight(-1)
+
+    def key_down(self) -> None:
+        self._move_highlight(1)
 
     @on(ListView.Selected)
     def selected(self, event: ListView.Selected) -> None:
         if event.item.id:
-            self.dismiss(self.models[int(event.item.id.removeprefix("model-"))].name)
+            try:
+                self.dismiss(self._filtered[int(event.item.id.removeprefix("model-"))].name)
+            except (ValueError, IndexError):
+                return
 
     def key_escape(self) -> None:
         self.dismiss(None)
 
 
 class CommandMenu(EscapeModalScreen):
-    """Minimal command menu opened from Ctrl+P."""
+    """Minimal command menu opened from Ctrl+P, with global static search."""
 
     CSS = """
     CommandMenu { align: center middle; background: #000000 75%; }
     #command-menu {
-        width: 52; height: auto; padding: 1 2; background: $surface;
+        width: 58; height: auto; max-height: 80%; padding: 1 2; background: $surface;
         border: none;
     }
     #command-title { height: 2; color: $text; text-style: bold; }
+    #command-search { margin-bottom: 1; border: tall #333333; background: $background; }
+    #command-search:focus { border: tall #a0a0a0; }
     #command-help { height: 1; color: #666666; margin-bottom: 1; }
-    #command-list { height: auto; background: $surface; border: none; }
+    #command-list { height: auto; max-height: 20; background: $surface; border: none; }
     #command-list:focus { border: none; }
     #command-list ListItem { height: 3; padding: 1 1; color: #bdbdbd; background: $surface; }
     #command-list ListItem:hover { background: #303030; color: #ffffff; }
@@ -235,34 +349,118 @@ class CommandMenu(EscapeModalScreen):
         ("artinium", "Artinium", "themes, permissions, updates, and info"),
     )
 
+    # Static searchable index: top-level + subsections. Intentionally excludes
+    # dynamic names (session titles, model names) — those have their own local
+    # search inside SessionScreen / ModelScreen.
+    SEARCH_INDEX: tuple[tuple[str, str, str, str], ...] = (
+        ("model", "Model", "select a model or change its settings", "model modelo cambiar"),
+        ("model-change", "Change model", "select a detected model", "model modelo cambiar change select"),
+        ("model-settings", "Model settings", "reasoning, temperature, and output", "model settings razonamiento temperatura salida razonar"),
+        ("model-context", "Context settings", "window and compaction", "context contexto ventana compactar compaction ventana"),
+        ("sessions", "Sessions", "new, switch, rename, pin, or delete", "session sesion sesiones cambiar nueva renombrar"),
+        ("sessions-new", "New session", "start a fresh conversation", "session sesion nueva new fresh"),
+        ("workspace", "Change workspace", "open another folder", "workspace carpeta folder proyecto"),
+        ("files", "Show / hide sidebar", "files and session information", "sidebar files archivos barra lateral mostrar ocultar"),
+        ("commands", "Commands", "slash commands and keyboard shortcuts", "commands comandos slash atajos shortcuts"),
+        ("compact", "Compact now", "summarize older messages", "compact context contexto resumir compactar"),
+        ("autocompact", "Auto compact", "off, 70, 80, or 90", "autocompact automatico contexto"),
+        ("undo", "Undo", "revert latest file change", "undo deshacer revertir cambio"),
+        ("changes", "Changes", "review session file changes", "changes cambios historial"),
+        ("artinium", "Artinium", "themes, permissions, updates, and info", "artinium config info"),
+        ("themes", "Themes", "change interface theme", "theme tema apariencia"),
+        ("permissions", "Permissions", "tool permission policy", "permissions permisos herramientas"),
+        ("updates", "Updates", "check for updates", "update actualizar version"),
+    )
+
+    _ALLOWED_WHILE_WORKING = {"files", "model", "model-change", "commands"}
+
     def __init__(self, *, working: bool = False):
         super().__init__()
         self.working = working
+        self._filtered: list[tuple[str, str, str]] = []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command-menu"):
             yield Static("Menu", id="command-title")
-            help_text = "↑↓ navigate  ·  enter select  ·  esc close"
+            yield Input(placeholder="Type to search…  e.g. contexto", id="command-search")
+            help_text = "↑↓ navigate  ·  type filters  ·  enter select  ·  esc close"
             if self.working:
                 help_text = "Model selection and the sidebar remain available"
             yield Static(help_text, id="command-help")
-            yield ListView(*[
+            yield ListView(*self._build_items(""), id="command-list")
+
+    def _build_items(self, query: str) -> list[ListItem]:
+        query = query.strip()
+        if not query:
+            self._filtered = [(key, title, detail) for key, title, detail in self.ITEMS]
+        else:
+            self._filtered = [
+                (key, title, detail)
+                for key, title, detail, keywords in self.SEARCH_INDEX
+                if _search_matches(query, title, detail, keywords)
+            ]
+        items: list[ListItem] = []
+        for key, title, detail in self._filtered:
+            locked = self.working and key not in self._ALLOWED_WHILE_WORKING
+            label = (
+                f"{title}\n[dim]{'Wait for current task to finish' if locked else detail}[/]"
+            )
+            items.append(
                 ListItem(
-                    Label(
-                        f"{title}\n[dim]{'Wait for current task to finish' if self.working and key not in {'files', 'model', 'commands'} else detail}[/]"
-                    ),
+                    Label(label),
                     id=f"command-{key}",
-                    classes="command-item -locked" if self.working and key not in {"files", "model", "commands"} else "command-item",
-                    disabled=self.working and key not in {"files", "model", "commands"},
+                    classes="command-item -locked" if locked else "command-item",
+                    disabled=locked,
                 )
-                for key, title, detail in self.ITEMS
-            ], id="command-list")
+            )
+        return items
+
+    async def _rebuild(self, query: str) -> None:
+        view = self.query_one("#command-list", ListView)
+        await view.clear()
+        for item in self._build_items(query):
+            await view.append(item)
+        if self._filtered:
+            view.index = 0
 
     def on_mount(self) -> None:
         menu = self.query_one("#command-menu")
         menu.styles.opacity = 0.0
         menu.styles.animate("opacity", 1.0, duration=0.14, easing="out_cubic")
-        self.query_one(ListView).focus()
+        self.query_one("#command-search", Input).focus()
+
+    @on(Input.Changed, "#command-search")
+    async def _search_changed(self, event: Input.Changed) -> None:
+        await self._rebuild(event.value)
+
+    @on(Input.Submitted, "#command-search")
+    def _search_submitted(self, event: Input.Submitted) -> None:
+        view = self.query_one("#command-list", ListView)
+        item = view.highlighted_child
+        if item is not None and item.id and not item.disabled:
+            self.dismiss(item.id.removeprefix("command-"))
+        elif self._filtered:
+            # Single unambiguous match: select it even without highlight.
+            for key, _, _ in self._filtered:
+                if key not in self._ALLOWED_WHILE_WORKING and self.working:
+                    continue
+                self.dismiss(key)
+                return
+
+    def _move_highlight(self, direction: int) -> None:
+        try:
+            view = self.query_one("#command-list", ListView)
+        except Exception:
+            return
+        if not self._filtered:
+            return
+        view.index = (view.index + direction) % len(self._filtered)
+
+    def key_up(self) -> None:
+        self._move_highlight(-1)
+
+    def key_down(self) -> None:
+        self._move_highlight(1)
 
     @on(ListView.Selected)
     def selected(self, event: ListView.Selected) -> None:
@@ -609,6 +807,8 @@ class SessionScreen(EscapeModalScreen):
     SessionScreen { align: center middle; background: #000000 75%; }
     #session-box { width: 72; height: auto; max-height: 78%; padding: 1 2; background: $surface; border: none; }
     #session-title { height: 2; color: $text; text-style: bold; }
+    #session-search { margin-bottom: 1; border: tall #333333; background: $background; }
+    #session-search:focus { border: tall #a0a0a0; }
     #session-help { height: 1; color: $text-muted; margin-bottom: 1; }
     #session-list { height: auto; max-height: 20; background: $surface; border: none; }
     #session-list:focus { border: none; }
@@ -621,42 +821,109 @@ class SessionScreen(EscapeModalScreen):
         super().__init__()
         self.sessions = sessions
         self.current_id = current_id
+        self._filtered: list[SessionRecord] = list(sessions)
+
+    def _entries(self, sessions: list[SessionRecord], *, grouped: bool) -> list[ListItem]:
+        if not grouped:
+            return [
+                ListItem(
+                    Label(
+                        f"{'●' if session.id == self.current_id else ' '}"
+                        f"  {'★  ' if session.pinned else '    '}{session.title}\n"
+                        f"[dim]{len(session.history)} messages[/]"
+                    ),
+                    id=f"session-{session.id}",
+                )
+                for session in sessions
+            ]
+        pinned = [session for session in sessions if session.pinned]
+        regular = [session for session in sessions if not session.pinned]
+        entries: list[ListItem] = []
+        if pinned:
+            entries.append(ListItem(Label("PINNED"), classes="session-group", disabled=True))
+            entries.extend(
+                ListItem(
+                    Label(
+                        f"{'●' if session.id == self.current_id else ' '}  ★  {session.title}\n"
+                        f"[dim]{len(session.history)} messages[/]"
+                    ),
+                    id=f"session-{session.id}",
+                )
+                for session in pinned
+            )
+        if regular:
+            entries.append(ListItem(Label("SESSIONS"), classes="session-group", disabled=True))
+            entries.extend(
+                ListItem(
+                    Label(
+                        f"{'●' if session.id == self.current_id else ' '}     {session.title}\n"
+                        f"[dim]{len(session.history)} messages[/]"
+                    ),
+                    id=f"session-{session.id}",
+                )
+                for session in regular
+            )
+        return entries
 
     def compose(self) -> ComposeResult:
         with Vertical(id="session-box"):
             yield Static("Sessions", id="session-title")
-            yield Static("enter switches  ·  n new  ·  r rename  ·  p pin  ·  d delete", id="session-help")
-            pinned = [session for session in self.sessions if session.pinned]
-            regular = [session for session in self.sessions if not session.pinned]
-            entries: list[ListItem] = []
-            if pinned:
-                entries.append(ListItem(Label("PINNED"), classes="session-group", disabled=True))
-                entries.extend(
-                    ListItem(
-                        Label(
-                            f"{'●' if session.id == self.current_id else ' '}  ★  {session.title}\n"
-                            f"[dim]{len(session.history)} messages[/]"
-                        ),
-                        id=f"session-{session.id}",
-                    )
-                    for session in pinned
-                )
-            if regular:
-                entries.append(ListItem(Label("SESSIONS"), classes="session-group", disabled=True))
-                entries.extend(
-                    ListItem(
-                        Label(
-                            f"{'●' if session.id == self.current_id else ' '}     {session.title}\n"
-                            f"[dim]{len(session.history)} messages[/]"
-                        ),
-                        id=f"session-{session.id}",
-                    )
-                    for session in regular
-                )
-            yield ListView(*entries, id="session-list")
+            yield Input(placeholder="Type to filter sessions…", id="session-search")
+            yield Static("↑↓ navigate  ·  type filters  ·  enter switches  ·  n new  ·  r rename  ·  p pin  ·  d delete", id="session-help")
+            yield ListView(*self._entries(self.sessions, grouped=True), id="session-list")
 
     def on_mount(self) -> None:
-        self.query_one(ListView).focus()
+        self.query_one("#session-search", Input).focus()
+
+    async def _rebuild(self, query: str) -> None:
+        q = _normalize_search(query)
+        if q:
+            self._filtered = [s for s in self.sessions if q in _normalize_search(s.title)]
+        else:
+            self._filtered = list(self.sessions)
+        view = self.query_one("#session-list", ListView)
+        await view.clear()
+        for item in self._entries(self._filtered, grouped=not bool(q)):
+            await view.append(item)
+        if self._filtered:
+            # Highlight current session if visible, else first match.
+            ids = [f"session-{s.id}" for s in self._filtered]
+            current = f"session-{self.current_id}"
+            try:
+                view.index = ids.index(current) if not q else 0
+                if q:
+                    # When filtering, first match is the expected target.
+                    view.index = 0
+            except ValueError:
+                view.index = 0
+
+    @on(Input.Changed, "#session-search")
+    async def _search_changed(self, event: Input.Changed) -> None:
+        await self._rebuild(event.value)
+
+    @on(Input.Submitted, "#session-search")
+    def _search_submitted(self, event: Input.Submitted) -> None:
+        view = self.query_one("#session-list", ListView)
+        item = view.highlighted_child
+        if item is not None and item.id and not item.disabled:
+            self.dismiss(f"select:{item.id.removeprefix('session-')}")
+
+    def _move_highlight(self, direction: int) -> None:
+        try:
+            view = self.query_one("#session-list", ListView)
+        except Exception:
+            return
+        # Count only selectable rows (skip PINNED/SESSIONS headers).
+        selectable = sum(1 for _ in view.query(ListItem) if not _.disabled)
+        if selectable == 0:
+            return
+        view.index = (view.index + direction) % len(list(view.query(ListItem)))
+
+    def key_up(self) -> None:
+        self._move_highlight(-1)
+
+    def key_down(self) -> None:
+        self._move_highlight(1)
 
     def _selected_id(self) -> str | None:
         view = self.query_one(ListView)
@@ -1410,6 +1677,11 @@ class ArtiumApp(App[None]):
         background: $boost; overflow: hidden;
     }
     #queue-preview.-visible { display: block; }
+    #attachments-preview {
+        display: none; height: auto; padding: 0 0 1 0; color: #b0b0b0;
+        background: $boost; overflow: hidden;
+    }
+    #attachments-preview.-visible { display: block; }
     #composer-shell:focus-within { border: none; }
     #prompt { height: 3; border: none; background: transparent; padding: 0; color: $text; }
     #prompt:focus { border: none; }
@@ -1478,7 +1750,8 @@ class ArtiumApp(App[None]):
                 yield ChatLog(id="chat")
                 with Vertical(id="composer-shell"):
                     yield Static("", id="queue-preview", markup=False)
-                    yield PromptInput(placeholder="Write a message…", id="prompt", disabled=True)
+                    yield Static("", id="attachments-preview", markup=True)
+                    yield PromptInput(placeholder="Write a message…  ·  drop or paste images/files", id="prompt", disabled=True)
                     with Horizontal(id="composer-meta"):
                         yield Static("", id="model-status")
                         yield Static("Enter send  ·  Ctrl+P menu  ·  Ctrl+C exit", id="send-hint")
@@ -1597,6 +1870,7 @@ class ArtiumApp(App[None]):
         if self.active_session:
             self.active_session.draft = event.value
             self._autosave_active_session()
+        self._refresh_attachments_preview()
 
     def _run_slash_command(self, value: str) -> None:
         command, _, argument = value.partition(" ")
@@ -1700,34 +1974,160 @@ class ArtiumApp(App[None]):
     def _start_prompt(self, prompt: str) -> None:
         if self.active_session and self.active_session.title == "New session" and self._title_seed is None:
             self._title_seed = prompt
-        self.query_one("#chat", ChatLog).add_user(prompt)
+        # Transcript shows friendly filenames like OpenCode: "[Image 2 · foto.png]".
+        self.query_one("#chat", ChatLog).add_user(self._expand_tokens_for_display(prompt))
+        self._refresh_attachments_preview()
         self._generation_task = asyncio.create_task(self.generate(prompt))
 
+    IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
+    @staticmethod
+    def _normalize_pasted_path(raw: str) -> Path | None:
+        """Accept plain paths, file:// URIs and GNOME copied-files lines."""
+        candidate = raw.strip().strip("'\"")
+        if not candidate or candidate == "x-special/gnome-copied-files":
+            return None
+        if candidate.startswith("file://"):
+            # file:///home/user/img.png -> /home/user/img.png (also localhost form)
+            candidate = re.sub(r"^file://(localhost)?", "", candidate)
+            # URL-decode %20 etc. without pulling urllib cost into hot path
+            candidate = candidate.replace("%20", " ")
+        path = Path(candidate).expanduser()
+        try:
+            if path.is_file():
+                return path.resolve()
+        except OSError:
+            return None
+        return None
+
+    def _register_attachment(self, resolved: Path) -> str | None:
+        is_image = resolved.suffix.lower() in self.IMAGE_EXTENSIONS
+        if is_image and (not self.agent or not self.agent.model.supports_vision):
+            self.notify(f"{resolved.name}: the selected model does not support images", severity="warning")
+            return None
+        self._attachment_counter += 1
+        kind = "Image" if is_image else "File"
+        token = f"[{kind} {self._attachment_counter}]"
+        self._attachment_refs[token] = resolved
+        return token
+
     def prepare_prompt_paste(self, text: str) -> str | None:
-        """Turn pasted/dropped file paths into compact attachment tokens."""
+        """Turn pasted/dropped file paths into OpenCode-style [Image N] pills.
+
+        Unlike the previous strict version (all-or-nothing), this handles:
+        - ``file://`` URIs, single/double quotes, ``%20``
+        - GNOME ``x-special/gnome-copied-files`` payloads
+        - mixed content like ``'/tmp/a.png' que ves?`` -> ``[Image 1] que ves?``
+        Returns None when no file was found so the raw paste is preserved.
+        """
+        if not text or not text.strip():
+            return None
         try:
             values = shlex.split(text.strip())
         except ValueError:
-            return None
+            # Unbalanced quotes (typical drag-drop): fall back to whitespace split
+            # and strip quotes manually per chunk.
+            values = text.strip().split()
         if not values:
             return None
-        paths = [Path(value).expanduser() for value in values]
-        if not all(path.is_file() for path in paths):
-            return None
-        tokens: list[str] = []
-        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-        for path in paths:
-            resolved = path.resolve()
-            is_image = resolved.suffix.lower() in image_extensions
-            if is_image and (not self.agent or not self.agent.model.supports_vision):
-                self.notify(f"{resolved.name}: the selected model does not support images", severity="warning")
+        converted: list[str] = []
+        found_any = False
+        for value in values:
+            resolved = self._normalize_pasted_path(value)
+            if resolved is None:
+                converted.append(value)
                 continue
-            self._attachment_counter += 1
-            kind = "Image" if is_image else "File"
-            token = f"[{kind} {self._attachment_counter}]"
-            self._attachment_refs[token] = resolved
-            tokens.append(token)
-        return " ".join(tokens)
+            token = self._register_attachment(resolved)
+            if token is None:
+                # Vision unsupported: keep original text so nothing is swallowed.
+                converted.append(value)
+                continue
+            converted.append(token)
+            found_any = True
+        if not found_any:
+            return None
+        # Collapse accidental double spaces, keep single spaces like OpenCode.
+        result = re.sub(r"\s+", " ", " ".join(converted)).strip()
+        self.call_after_refresh(self._refresh_attachments_preview) if self.is_mounted else None
+        return result
+
+    def _attachment_label(self, token: str) -> str:
+        path = self._attachment_refs.get(token)
+        name = path.name if path else "?"
+        icon = "◉" if token.startswith("[Image") else "▤"
+        short = name if len(name) <= 28 else name[:25] + "…"
+        return f"{icon} {token[1:-1]} · {short}"
+
+    def _refresh_attachments_preview(self) -> None:
+        """Show an OpenCode-like attachment strip above the prompt."""
+        try:
+            preview = self.query_one("#attachments-preview", Static)
+            shell = self.query_one("#composer-shell")
+        except Exception:
+            return
+        try:
+            current = self.query_one("#prompt", Input).value
+        except Exception:
+            current = ""
+        # Prune refs the user deleted from the composer (pill removed -> detached).
+        orphan = [tok for tok in list(self._attachment_refs) if tok not in current]
+        # Only prune when composer is visible (avoid wiping queued/history restores).
+        # Queued prompts keep their own copy of the token string, refs stay.
+        for tok in orphan:
+            if tok not in " ".join(self._queued_prompts):
+                # Keep the bytes mapping if a generation is in flight with that token.
+                generating = bool(self._generation_task and not self._generation_task.done())
+                if not generating:
+                    del self._attachment_refs[tok]
+        active = [(tok, self._attachment_refs[tok]) for tok in self._attachment_refs if tok in current]
+        # Order by token number for stable display.
+        def _num(tok: str) -> int:
+            try:
+                return int(tok.split()[-1].rstrip("]"))
+            except ValueError:
+                return 0
+        active.sort(key=lambda item: _num(item[0]))
+        if not active:
+            preview.update("")
+            preview.remove_class("-visible")
+        else:
+            pills = []
+            for tok, path in active:
+                icon = "◉" if tok.startswith("[Image") else "▤"
+                name = path.name if len(path.name) <= 28 else path.name[:25] + "…"
+                pills.append(f"[#0b0b0b on #2e2e2e] {icon} {tok[1:-1]} · {name} [/]")
+            preview.update(" ".join(pills))
+            preview.add_class("-visible")
+        self._layout_composer()
+
+    def _layout_composer(self) -> None:
+        try:
+            shell = self.query_one("#composer-shell", Vertical)
+            queue = self.query_one("#queue-preview", Static)
+            attachments = self.query_one("#attachments-preview", Static)
+        except Exception:
+            return
+        extra = 0
+        if "-visible" in queue.classes:
+            try:
+                lines = str(queue.renderable).splitlines() or [""]
+            except Exception:
+                lines = [""]
+            # Keep previous behaviour (7 + lines) as 6 + (lines + 1).
+            extra += len(lines) + 1
+        if "-visible" in attachments.classes:
+            extra += 1
+        shell.styles.height = 6 + extra
+
+    def _expand_tokens_for_display(self, prompt: str) -> str:
+        """Render '[Image 2]' as '[Image 2 · name.png]' in the transcript."""
+        def _repl(match: re.Match[str]) -> str:
+            token = match.group(0)
+            path = self._attachment_refs.get(token)
+            if not path:
+                return token
+            return f"[{token[1:-1]} · {path.name}]"
+        return re.sub(r"\[(?:Image|File) \d+\]", _repl, prompt)
 
     def _prepare_attachments(self, prompt: str) -> tuple[str, list[str]]:
         content = prompt
@@ -1998,22 +2398,21 @@ class ArtiumApp(App[None]):
 
     def _update_queue_ui(self) -> None:
         preview = self.query_one("#queue-preview", Static)
-        shell = self.query_one("#composer-shell")
         if self._queued_prompts:
             visible = self._queued_prompts[:3]
             lines = [f"Queued  ·  {len(self._queued_prompts)} message{'s' if len(self._queued_prompts) != 1 else ''}"]
-            lines.extend(f"{index}.  {value}" for index, value in enumerate(visible, 1))
+            # Show friendly filenames in the queue too, like the transcript.
+            lines.extend(f"{index}.  {self._expand_tokens_for_display(value)}" for index, value in enumerate(visible, 1))
             remaining = len(self._queued_prompts) - len(visible)
             if remaining:
                 lines.append(f"+ {remaining} more")
             lines.append("")  # one quiet separator before the editable prompt
             preview.update("\n".join(lines))
             preview.add_class("-visible")
-            shell.styles.height = 7 + len(lines)
         else:
             preview.update("")
             preview.remove_class("-visible")
-            shell.styles.height = 6
+        self._layout_composer()
         self._set_composer_hint(
             working=bool(self._generation_task and not self._generation_task.done())
         )
@@ -2193,8 +2592,21 @@ class ArtiumApp(App[None]):
     def _menu_selected(self, command: str | None) -> None:
         if command == "model":
             self.action_model_hub(return_to_menu=True)
+        elif command == "model-change":
+            self.action_models(return_to_menu=False, return_to_hub=False)
+        elif command == "model-settings":
+            self.action_model_settings(return_to_menu=False, return_to_hub=False)
+        elif command in {"model-context", "context-settings", "compact", "autocompact"}:
+            if command == "compact":
+                self.action_compact_context()
+            elif command == "autocompact":
+                self.action_auto_compact()
+            else:
+                self.action_context_settings(return_to_menu=False, return_to_model_hub=False)
         elif command == "sessions":
             self.action_sessions(return_to_menu=True)
+        elif command == "sessions-new":
+            self._menu_new_session()
         elif command == "workspace":
             self.action_workspace(return_to_menu=True)
         elif command == "files":
@@ -2203,6 +2615,31 @@ class ArtiumApp(App[None]):
             self.action_commands(return_to_menu=True)
         elif command == "artinium":
             self.action_artinium(return_to_menu=True)
+        elif command in {"themes", "permissions", "updates"}:
+            if command == "themes":
+                self.action_themes()
+            elif command == "permissions":
+                self.action_permissions()
+            else:
+                self.action_updates()
+        elif command == "undo":
+            self.action_undo()
+        elif command == "changes":
+            self.action_changes()
+
+    def _menu_new_session(self) -> None:
+        if self._generation_task or not self.active_session:
+            return
+        self._save_active_session()
+        self.active_session = SessionRecord.new()
+        self._title_seed = None
+        if self.agent:
+            self.agent.clear()
+        try:
+            self.query_one("#chat", ChatLog).clear()
+        except Exception:
+            pass
+        self.update_topbar()
 
     def action_commands(self, *, return_to_menu: bool = False) -> None:
         self.push_screen(

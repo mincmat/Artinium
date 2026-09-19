@@ -13,7 +13,7 @@ from artium.model_settings import ModelSettings, ModelSettingsStore
 from artium.ui.app import (
     ArtiumApp, CommandMenu, ContextSettingsScreen, DeleteSessionScreen, EditQueueScreen,
     ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, QueueScreen, SessionScreen, StopScreen,
-    QuestionScreen,
+    QuestionScreen, _search_matches,
 )
 from artium.sessions import SessionRecord
 from artium.tools import QuestionRequest
@@ -615,6 +615,65 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(prompt.value, "second message")
                 await pilot.press("down")
                 self.assertEqual(prompt.value, "unfinished draft")
+
+    def test_global_search_matches_subsections_across_languages(self) -> None:
+        self.assertTrue(_search_matches("contexto", "Context settings", "window and compaction", "context contexto"))
+        self.assertTrue(_search_matches("modelo", "Model", "select a model", "model modelo"))
+        self.assertFalse(_search_matches("xyz123", "Model", "select", "model"))
+        hits = [key for key, title, detail, keywords in CommandMenu.SEARCH_INDEX if _search_matches("contexto", title, detail, keywords)]
+        self.assertIn("model-context", hits)
+        # Global index must not contain dynamic session/model names.
+        blob = " ".join(f"{title} {detail} {keywords}" for _, title, detail, keywords in CommandMenu.SEARCH_INDEX)
+        self.assertNotIn("qwen", blob.lower())
+
+    async def test_menu_search_filters_and_selects_with_keyboard(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                await pilot.press("ctrl+p")
+                await pilot.pause(0.2)
+                search = app.screen.query_one("#command-search", Input)
+                self.assertIs(app.screen.focused, search)
+                for char in "contexto":
+                    await pilot.press(char)
+                await pilot.pause(0.3)
+                items = list(app.screen.query_one("#command-list", ListView).query(ListItem))
+                ids = [item.id or "" for item in items]
+                self.assertTrue(any("context" in item_id or "compact" in item_id for item_id in ids))
+
+    def test_prompt_paste_converts_paths_to_opencode_style_pills(self) -> None:
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "Captura de pantalla_20260918_225649.png"
+            image.write_bytes(b"fake")
+            note = Path(directory) / "nota.txt"
+            note.write_text("hola")
+            app = ArtiumApp(Path(directory))
+            app.agent = MagicMock()  # type: ignore[assignment]
+            app.agent.model.supports_vision = True
+            app.notify = lambda *_, **__: None  # type: ignore[method-assign]
+
+            single = app.prepare_prompt_paste(f"'{image}'")
+            self.assertEqual(single, "[Image 1]")
+            self.assertIn("[Image 1]", app._attachment_refs)
+
+            mixed = app.prepare_prompt_paste(f"'{image}' que ves?")
+            self.assertEqual(mixed, "[Image 2] que ves?")
+            self.assertNotIn(str(image), mixed or "")
+
+            encoded = app.prepare_prompt_paste(f"file://{note}")
+            # nota.txt has no spaces so file:// form survives shlex as one chunk
+            if " " not in str(note):
+                self.assertEqual(encoded, "[File 3]")
+
+            self.assertIsNone(app.prepare_prompt_paste("hola que tal"))
+            expanded = app._expand_tokens_for_display("[Image 1] que ves?")
+            self.assertIn(image.name, expanded)
+            self.assertIn("Image 1", expanded)
 
     async def test_prompt_selection_copies_and_pastes_without_triggering_exit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
