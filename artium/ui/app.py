@@ -391,7 +391,7 @@ class CommandMenu(EscapeModalScreen):
     #command-search { margin-bottom: 1; border: tall #333333; background: $background; }
     #command-search:focus { border: tall #a0a0a0; }
     #command-help { height: 1; color: #666666; margin-bottom: 1; }
-    #command-list { height: auto; max-height: 20; background: $surface; border: none; }
+    #command-list { height: auto; max-height: 21; background: $surface; border: none; }
     #command-list:focus { border: none; }
     #command-list ListItem { height: 3; padding: 1 1; color: #bdbdbd; background: $surface; }
     #command-list ListItem:hover { background: #303030; color: #ffffff; }
