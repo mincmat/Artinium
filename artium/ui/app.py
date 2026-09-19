@@ -1723,7 +1723,7 @@ class ArtiumApp(App[None]):
     .thinking-block CollapsibleTitle:hover { background: #101010; color: $text; }
     .thinking-block CollapsibleTitle:focus { background: $boost; color: #d0d0d0; text-style: none; }
     .thinking-block Contents { padding: 0; }
-    .thinking-detail { height: auto; padding: 0 2; background: $surface; color: #888888; }
+    .thinking-detail { height: auto; padding: 0 2; background: transparent; color: #636363; }
     #composer-shell {
         height: 6; margin: 0 6 2 3; padding: 1 2; background: $boost;
         border: none;
