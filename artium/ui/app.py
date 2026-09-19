@@ -129,33 +129,49 @@ class PromptInput(Input):
         else:
             self.app.action_interrupt_or_exit()  # type: ignore[attr-defined]
 
+    def _spaced_for_insert(self, text: str) -> str:
+        """Pad pills with a single space so they never glue to typed text."""
+        try:
+            if self.selection.is_empty:
+                cursor = self.cursor_position
+                before = self.value[:cursor]
+                after = self.value[cursor:]
+                if before and not before[-1].isspace() and not text[:1].isspace():
+                    text = " " + text
+                if after and not after[:1].isspace() and not text[-1:].isspace():
+                    text = text + " "
+        except Exception:
+            pass
+        return text
+
     def _on_paste(self, event: events.Paste) -> None:
+        # Terminal bracketed paste. The insert always goes through the base
+        # handler exactly once, so a token can never duplicate the raw path.
         replacement = self.app.prepare_prompt_paste(event.text)  # type: ignore[attr-defined]
-        if replacement is None:
+        if not replacement:
             super()._on_paste(event)
             return
-        if replacement:
-            # OpenCode-style: never concatenate tokens with surrounding text.
-            # Ensure a single space around the inserted pills, e.g.
-            # "foo'/path.png'bar" -> "foo [Image 1] bar" instead of "foo[Image 1]bar".
-            text = replacement
+        event.text = self._spaced_for_insert(replacement)
+        super()._on_paste(event)
+
+    def action_paste(self) -> None:
+        # Ctrl+V bypasses Paste events (base replaces directly), so tokenize
+        # here too — otherwise a pasted path stays raw next to the pill.
+        try:
+            clipboard = self.app.clipboard
+        except Exception:
+            clipboard = ""
+        replacement = None
+        if clipboard:
             try:
-                selection = self.selection
-                if selection.is_empty:
-                    cursor = self.cursor_position
-                    current = self.value
-                    before = current[:cursor]
-                    after = current[cursor:]
-                    if before and not before[-1].isspace() and not text[:1].isspace():
-                        text = " " + text
-                    if after and not after[:1].isspace() and not text[-1:].isspace():
-                        text = text + " "
-                    self.insert_text_at_cursor(text)
-                else:
-                    self.replace(text, *selection)
+                replacement = self.app.prepare_prompt_paste(clipboard)  # type: ignore[attr-defined]
             except Exception:
-                self.insert_text_at_cursor(replacement)
-        event.stop()
+                replacement = None
+        if not replacement:
+            super().action_paste()
+            return
+        start, end = self.selection
+        self.replace(self._spaced_for_insert(replacement), start, end)
 
 
 class EscapeModalScreen(ModalScreen[Any]):
@@ -2040,11 +2056,12 @@ class ArtiumApp(App[None]):
             return None
         return None
 
-    def _register_attachment(self, resolved: Path) -> str | None:
+    def _register_attachment(self, resolved: Path) -> str:
+        # Always tokenize: the prompt must never show a raw path, even when
+        # the model has no vision (the image is then noted as text on send).
         is_image = resolved.suffix.lower() in self.IMAGE_EXTENSIONS
         if is_image and (not self.agent or not self.agent.model.supports_vision):
             self.notify(f"{resolved.name}: the selected model does not support images", severity="warning")
-            return None
         self._attachment_counter += 1
         kind = "Image" if is_image else "File"
         token = f"[{kind} {self._attachment_counter}]"
@@ -2077,12 +2094,7 @@ class ArtiumApp(App[None]):
             if resolved is None:
                 converted.append(value)
                 continue
-            token = self._register_attachment(resolved)
-            if token is None:
-                # Vision unsupported: keep original text so nothing is swallowed.
-                converted.append(value)
-                continue
-            converted.append(token)
+            converted.append(self._register_attachment(resolved))
             found_any = True
         if not found_any:
             return None
@@ -2173,10 +2185,17 @@ class ArtiumApp(App[None]):
         content = prompt
         images: list[str] = []
         additions: list[str] = []
+        vision = bool(self.agent and self.agent.model.supports_vision)
         for token, path in self._attachment_refs.items():
             if token not in prompt:
                 continue
             if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+                if not vision:
+                    additions.append(
+                        f"{token} {path.name}: (image attached but not sent — "
+                        "the selected model has no vision support)"
+                    )
+                    continue
                 try:
                     images.append(base64.b64encode(path.read_bytes()).decode("ascii"))
                 except OSError as exc:

@@ -6,13 +6,14 @@ import unittest
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from textual import events
 from textual.widgets import Collapsible, Input, ListItem, ListView, Static
 
 from artium.ollama_client import ModelInfo
 from artium.model_settings import ModelSettings, ModelSettingsStore
 from artium.ui.app import (
     ArtiumApp, CommandMenu, ContextSettingsScreen, DeleteSessionScreen, EditQueueScreen,
-    ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, QueueScreen, SessionScreen, StopScreen,
+    ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, PromptInput, QueueScreen, SessionScreen, StopScreen,
     QuestionScreen, _search_matches, _system_lines, _system_load, _system_memory,
 )
 from artium.sessions import SessionRecord
@@ -731,6 +732,49 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
             expanded = app._expand_tokens_for_display("[Image 1] que ves?")
             self.assertIn(image.name, expanded)
             self.assertIn("Image 1", expanded)
+
+    def test_prompt_paste_tokenizes_even_without_vision(self) -> None:
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "foto.png"
+            image.write_bytes(b"fake")
+            app = ArtiumApp(Path(directory))
+            app.agent = MagicMock()  # type: ignore[assignment]
+            app.agent.model.supports_vision = False
+            app.notify = lambda *_, **__: None  # type: ignore[method-assign]
+
+            result = app.prepare_prompt_paste(f"'{image}'")
+            self.assertEqual(result, "[Image 1]")
+            self.assertNotIn(str(image), result or "")
+            content, images = app._prepare_attachments("[Image 1] que ves?")
+            self.assertEqual(images, [])
+            self.assertIn("no vision", content)
+
+    async def test_paste_paths_insert_only_the_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "Captura de pantalla_20260918_225649.png"
+            image.write_bytes(b"fake")
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                prompt = app.query_one("#prompt", PromptInput)
+                prompt.focus()
+                # Bracketed terminal paste: drive the handler once (post_message
+                # re-delivers in the test harness, so call it directly).
+                prompt._on_paste(events.Paste(f"'{image}'"))
+                await pilot.pause(0.2)
+                self.assertEqual(prompt.value, "[Image 1]")
+                self.assertNotIn(str(image), prompt.value)
+                # Ctrl+V path (bypasses Paste events in Textual).
+                prompt.value = ""
+                app.copy_to_clipboard(f"'{image}'")
+                await pilot.press("ctrl+v")
+                await pilot.pause(0.2)
+                self.assertEqual(prompt.value, "[Image 2]")
+                self.assertNotIn(str(image), prompt.value)
 
     async def test_prompt_selection_copies_and_pastes_without_triggering_exit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
