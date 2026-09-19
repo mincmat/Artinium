@@ -634,6 +634,31 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsInstance(message, _Markdown)
                 self.assertEqual(message.text, source)
 
+    async def test_session_single_letters_filter_instead_of_triggering_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                first = SessionRecord.new()
+                first.title = "Primera"
+                second = SessionRecord.new()
+                second.title = "Segunda"
+                results: list[str | None] = []
+                app.push_screen(SessionScreen([first, second], first.id), results.append)
+                await pilot.pause(0.2)
+                search = app.screen.query_one("#session-search", Input)
+                self.assertIs(app.screen.focused, search)
+                await pilot.press("n")
+                await pilot.pause(0.2)
+                self.assertIsInstance(app.screen, SessionScreen)
+                self.assertEqual(search.value, "n")
+                self.assertEqual(results, [])
+                await pilot.press("ctrl+n")
+                await pilot.pause(0.2)
+                self.assertEqual(results, ["new"])
+
     def test_global_search_matches_subsections_across_languages(self) -> None:
         self.assertTrue(_search_matches("contexto", "Context settings", "window and compaction", "context contexto"))
         self.assertTrue(_search_matches("modelo", "Model", "select a model", "model modelo"))

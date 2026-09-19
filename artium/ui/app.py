@@ -809,13 +809,21 @@ class SessionScreen(EscapeModalScreen):
     #session-title { height: 2; color: $text; text-style: bold; }
     #session-search { margin-bottom: 1; border: tall #333333; background: $background; }
     #session-search:focus { border: tall #a0a0a0; }
-    #session-help { height: 1; color: $text-muted; margin-bottom: 1; }
+    #session-help { height: 2; color: $text-muted; margin-bottom: 1; }
     #session-list { height: auto; max-height: 20; background: $surface; border: none; }
     #session-list:focus { border: none; }
     #session-list ListItem { height: 3; padding: 1; color: #bdbdbd; background: $surface; }
     #session-list:focus > ListItem.-highlight, #session-list > ListItem.-highlight { background: #303030; color: #ffffff; text-style: none; }
     #session-list .session-group { height: 2; padding: 1 1 0 1; color: #666666; background: $surface; text-style: bold; }
     """
+
+    BINDINGS = [
+        # Single letters must keep typing in the filter; actions use Ctrl.
+        Binding("ctrl+n", "new_session", "New", show=False, priority=True),
+        Binding("ctrl+r", "rename_session", "Rename", show=False, priority=True),
+        Binding("ctrl+s", "pin_session", "Pin", show=False, priority=True),
+        Binding("ctrl+x", "delete_session", "Delete", show=False, priority=True),
+    ]
 
     def __init__(self, sessions: list[SessionRecord], current_id: str):
         super().__init__()
@@ -869,7 +877,7 @@ class SessionScreen(EscapeModalScreen):
         with Vertical(id="session-box"):
             yield Static("Sessions", id="session-title")
             yield Input(placeholder="Type to filter sessions…", id="session-search")
-            yield Static("↑↓ navigate  ·  type filters  ·  enter switches  ·  n new  ·  r rename  ·  p pin  ·  d delete", id="session-help")
+            yield Static("↑↓ navigate  ·  type filters  ·  enter switches\n^N new  ·  ^R rename  ·  ^S pin  ·  ^X delete  ·  esc back", id="session-help")
             yield ListView(*self._entries(self.sessions, grouped=True), id="session-list")
 
     def on_mount(self) -> None:
@@ -930,25 +938,25 @@ class SessionScreen(EscapeModalScreen):
         item = view.highlighted_child
         if item and item.id:
             return item.id.removeprefix("session-")
-        return self.sessions[0].id if self.sessions else None
+        return self._filtered[0].id if self._filtered else None
 
     @on(ListView.Selected)
     def selected(self, event: ListView.Selected) -> None:
         if event.item.id:
             self.dismiss(f"select:{event.item.id.removeprefix('session-')}")
 
-    def key_n(self) -> None:
+    def action_new_session(self) -> None:
         self.dismiss("new")
 
-    def key_r(self) -> None:
+    def action_rename_session(self) -> None:
         if selected := self._selected_id():
             self.dismiss(f"rename:{selected}")
 
-    def key_p(self) -> None:
+    def action_pin_session(self) -> None:
         if selected := self._selected_id():
             self.dismiss(f"pin:{selected}")
 
-    def key_d(self) -> None:
+    def action_delete_session(self) -> None:
         if selected := self._selected_id():
             self.dismiss(f"delete:{selected}")
 
