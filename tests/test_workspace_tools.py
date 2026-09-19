@@ -11,8 +11,54 @@ from artium.tools.files import edit_file, glob_files, grep_files, list_files, re
 from artium.undo import UndoManager
 from artium.tools.shell import command_risk, is_dangerous, run_command
 from artium.tools.web import _DuckDuckGoParser, _TextExtractor, fetch_url
+from artium.sessions import SessionRecord, SessionStore
 from artium.tools import ToolRegistry
+from artium.updater import installer_url
 from artium.workspace import Workspace, WorkspaceError
+
+
+class SessionStoreTests(unittest.TestCase):
+    def test_corrupt_file_is_quarantined_not_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory))
+            store.path.parent.mkdir(parents=True, exist_ok=True)
+            store.path.write_text("{not valid json", encoding="utf-8")
+            self.assertEqual(store.load(), [])
+            backups = list(store.path.parent.glob("sessions.corrupt.*.json"))
+            self.assertEqual(len(backups), 1)
+
+    def test_orphan_active_session_and_bad_shapes_are_sanitized(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory))
+            record = SessionRecord.new()
+            record.title = "Keep me"
+            store.sessions = [record]
+            store.active_session_id = "missing-id"
+            store.save()
+            store.active_session_id = None
+            store.sessions = []
+            loaded = store.load()
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(store.active_session_id, record.id)
+            bad = SessionRecord.from_data({
+                "id": "x", "history": [{"no": "role"}, {"role": "user", "content": "hi"}],
+                "stats": {"input_tokens": "abc", "tool_calls": 2},
+                "queued_prompts": [None, "  ", "real"],
+            })
+            self.assertIsNotNone(bad)
+            assert bad is not None
+            self.assertEqual(len(bad.history), 1)
+            self.assertEqual(bad.stats["tool_calls"], 2)
+            self.assertNotIn("input_tokens", bad.stats)
+            self.assertEqual(bad.queued_prompts, ["real"])
+
+
+class UpdaterTests(unittest.TestCase):
+    def test_installer_url_is_pinned_to_a_commit(self) -> None:
+        url = installer_url("abc123")
+        self.assertIn("/abc123/install", url)
+        self.assertNotIn("/main/", url)
+        self.assertTrue(installer_url(None).endswith("/main/install"))
 
 
 class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
@@ -30,6 +76,43 @@ class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
         (self.root / "outside").symlink_to("/etc")
         with self.assertRaises(WorkspaceError):
             self.workspace.resolve("outside/passwd")
+
+    def test_planted_symlinks_cannot_leak_outside_reads_and_search(self) -> None:
+        outside = Path(self.temp.name).parent / "secret-outside.txt"
+        outside.write_text("top secret")
+        try:
+            (self.root / "link.txt").symlink_to(outside)
+            with self.assertRaises(ValueError):
+                read_file(self.workspace, "link.txt")
+            with self.assertRaises(ValueError):
+                write_file(self.workspace, "link.txt", "overwrite")
+            self.assertEqual(grep_files(self.workspace, "secret")["matches"], [])
+            self.assertEqual(search_files(self.workspace, "secret")["matches"], [])
+            entries = list_files(self.workspace)["entries"]
+            self.assertNotIn("link.txt", entries)
+        finally:
+            outside.unlink(missing_ok=True)
+
+    def test_dot_artinium_is_hidden_from_file_listing(self) -> None:
+        store = self.root / ".artinium"
+        store.mkdir()
+        (store / "sessions.json").write_text("{}")
+        write_file(self.workspace, "notes.txt", "hi")
+        entries = list_files(self.workspace)["entries"]
+        self.assertIn("notes.txt", entries)
+        self.assertFalse(any(entry.startswith(".artinium") for entry in entries))
+
+    async def test_shell_commands_are_denied_without_an_explicit_policy(self) -> None:
+        result = await ToolRegistry(self.workspace).execute("run_command", {"command": "exit 0"})
+        self.assertTrue(result.data["cancelled"])
+
+    async def test_shell_timeout_reports_timed_out_not_exit_124(self) -> None:
+        registry = ToolRegistry(self.workspace, permission_policy=lambda _: "allow")
+        result = await registry.execute("run_command", {"command": "sleep 5", "timeout": 1})
+        self.assertTrue(result.error)
+        self.assertTrue(result.data["timed_out"])
+        self.assertIsNone(result.data["exit_code"])
+        self.assertIn("timed out", result.data["error"])
 
     def test_file_tool_round_trip(self) -> None:
         result = write_file(self.workspace, "src/demo.py", "one\ntwo\nthree\n")
@@ -115,7 +198,9 @@ class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("unknown tool", result.data["technical_detail"])
 
     async def test_failed_commands_are_marked_as_failures(self) -> None:
-        result = await ToolRegistry(self.workspace).execute("run_command", {"command": "exit 7"})
+        result = await ToolRegistry(
+            self.workspace, permission_policy=lambda _: "allow"
+        ).execute("run_command", {"command": "exit 7"})
         self.assertTrue(result.error)
         self.assertEqual(result.data["error_type"], "CommandFailed")
         self.assertIn("exit code 7", result.data["error"])

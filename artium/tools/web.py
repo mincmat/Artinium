@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 import httpx
 
 MAX_PAGE_CHARS = 20_000
+MAX_PAGE_BYTES = 2_000_000
 USER_AGENT = "Artinium/0.2 local coding agent"
 
 
@@ -93,6 +94,8 @@ async def web_search(query: str, limit: int = 5) -> dict[str, Any]:
         response.raise_for_status()
     parser = _DuckDuckGoParser()
     parser.feed(response.text)
+    if not parser.results:
+        raise ValueError("search returned no parseable results (the provider may have changed its markup)")
     results = []
     for result in parser.results[:limit]:
         results.append({key: value.strip() for key, value in result.items()})
@@ -130,13 +133,34 @@ async def fetch_url(url: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=25, follow_redirects=False, headers={"User-Agent": USER_AGENT}) as client:
         for _ in range(6):
             await _validate_public_url(current)
-            response = await client.get(current)
-            if response.is_redirect:
-                location = response.headers.get("location")
-                if not location:
-                    raise ValueError("redirect has no location")
-                current = urljoin(current, location)
-                continue
+            # Stream with a byte budget: a hostile 100MB page must never be
+            # fully loaded into RAM before truncation.
+            async with client.stream("GET", current) as streamed:
+                if streamed.is_redirect:
+                    location = streamed.headers.get("location")
+                    if not location:
+                        raise ValueError("redirect has no location")
+                    current = urljoin(current, location)
+                    continue
+                try:
+                    declared = int(streamed.headers.get("content-length") or 0)
+                except ValueError:
+                    declared = 0
+                if declared > MAX_PAGE_BYTES:
+                    raise ValueError(f"page too large ({declared} bytes declared)")
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in streamed.aiter_bytes(65_536):
+                    received += len(chunk)
+                    if received > MAX_PAGE_BYTES:
+                        raise ValueError(f"page too large (over {MAX_PAGE_BYTES} bytes)")
+                    chunks.append(chunk)
+                response = httpx.Response(
+                    streamed.status_code,
+                    headers=streamed.headers,
+                    content=b"".join(chunks),
+                    request=streamed.request,
+                )
             response.raise_for_status()
             break
         else:

@@ -15,6 +15,11 @@ MAX_SEARCH_BYTES = 10_000_000
 MAX_DIFF_CHARS = 24_000
 
 
+def _contained(workspace: Workspace, candidate: Path) -> Path | None:
+    """Resolved candidate if it stays inside the workspace, else None."""
+    return workspace.contained(candidate)
+
+
 def glob_files(
     workspace: Workspace, pattern: str, path: str = ".", limit: int = 200
 ) -> dict[str, Any]:
@@ -63,15 +68,16 @@ def grep_files(
     limit = max(1, min(int(limit), 300))
     matches: list[dict[str, Any]] = []
     for candidate in candidates:
-        if not candidate.is_file() or is_probably_binary(candidate):
+        inside = _contained(workspace, candidate)
+        if inside is None or not inside.is_file() or is_probably_binary(inside):
             continue
         try:
-            if candidate.stat().st_size > MAX_SEARCH_BYTES:
+            if inside.stat().st_size > MAX_SEARCH_BYTES:
                 continue
-            with candidate.open("r", encoding="utf-8", errors="replace") as handle:
+            with inside.open("r", encoding="utf-8", errors="replace") as handle:
                 for number, line in enumerate(handle, 1):
                     if expression.search(line):
-                        matches.append({"path": workspace.relative(candidate), "line": number, "text": line.rstrip()[:300]})
+                        matches.append({"path": workspace.relative(inside), "line": number, "text": line.rstrip()[:300]})
                         if len(matches) >= limit:
                             return {"pattern": pattern, "matches": matches, "truncated": True}
         except OSError:
@@ -89,13 +95,22 @@ def list_files(workspace: Workspace, path: str = ".", depth: int = 2, limit: int
     base_parts = len(base.parts)
     for current, dirs, files in os.walk(base):
         level = len(Path(current).parts) - base_parts
-        dirs[:] = sorted(d for d in dirs if d not in IGNORED_DIRS)
+        dirs[:] = sorted(
+            d for d in dirs
+            if d not in IGNORED_DIRS and not d.startswith(".artinium")
+        )
         if level >= depth:
             dirs[:] = []
         for directory in dirs:
-            entries.append(workspace.relative(Path(current) / directory) + "/")
+            inside = _contained(workspace, Path(current) / directory)
+            if inside is None:
+                continue
+            entries.append(workspace.relative(inside) + "/")
         for filename in sorted(files):
-            entries.append(workspace.relative(Path(current) / filename))
+            inside = _contained(workspace, Path(current) / filename)
+            if inside is None:
+                continue
+            entries.append(workspace.relative(inside))
         if len(entries) >= limit:
             break
     return {"path": workspace.relative(base), "entries": entries[:limit], "truncated": len(entries) > limit}
@@ -105,6 +120,10 @@ def read_file(
     workspace: Workspace, path: str, start_line: int = 1, end_line: int | None = None
 ) -> dict[str, Any]:
     target = workspace.resolve(path, must_exist=True)
+    inside = _contained(workspace, target)
+    if inside is None:
+        raise ValueError(f"path outside the workspace rejected: {path}")
+    target = inside
     if not target.is_file():
         raise ValueError(f"not a file: {path}")
     if is_probably_binary(target):
@@ -141,11 +160,19 @@ def write_file(workspace: Workspace, path: str, content: str) -> dict[str, Any]:
     if len(content) > MAX_WRITE_CHARS:
         raise ValueError(f"content is too large ({len(content)} characters)")
     target = workspace.resolve(path)
+    if target.is_symlink():
+        raise ValueError(f"refusing to write through a symlink: {path}")
+    inside = _contained(workspace, target)
+    if inside is None:
+        raise ValueError(f"path outside the workspace rejected: {path}")
+    target = inside
     created = not target.exists()
     if target.exists() and target.is_dir():
         raise ValueError(f"path is a directory: {path}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    temporary = target.with_name(target.name + ".artinium-tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(target)
     return {"path": workspace.relative(target), "chars": len(content), "created": created}
 
 
@@ -153,6 +180,12 @@ def edit_file(
     workspace: Workspace, path: str, old_text: str, new_text: str, replace_all: bool = False
 ) -> dict[str, Any]:
     target = workspace.resolve(path, must_exist=True)
+    if target.is_symlink():
+        raise ValueError(f"refusing to edit through a symlink: {path}")
+    inside = _contained(workspace, target)
+    if inside is None:
+        raise ValueError(f"path outside the workspace rejected: {path}")
+    target = inside
     if not target.is_file() or is_probably_binary(target):
         raise ValueError(f"not a text file: {path}")
     if target.stat().st_size > MAX_EDIT_BYTES:
@@ -166,7 +199,9 @@ def edit_file(
     if occurrences > 1 and not replace_all:
         raise ValueError(f"old_text appears {occurrences} times; add context or use replace_all")
     updated = content.replace(old_text, new_text, -1 if replace_all else 1)
-    target.write_text(updated, encoding="utf-8")
+    temporary = target.with_name(target.name + ".artinium-tmp")
+    temporary.write_text(updated, encoding="utf-8")
+    temporary.replace(target)
     relative = workspace.relative(target)
     diff = "\n".join(unified_diff(
         content.splitlines(),
@@ -198,20 +233,21 @@ def search_files(
     matches: list[dict[str, Any]] = []
     candidates = [base] if base.is_file() else walk_files(base)
     for candidate in candidates:
-        if is_probably_binary(candidate):
+        inside = _contained(workspace, candidate)
+        if inside is None or is_probably_binary(inside):
             continue
         try:
-            if candidate.stat().st_size > MAX_SEARCH_BYTES:
+            if inside.stat().st_size > MAX_SEARCH_BYTES:
                 continue
         except OSError:
             continue
         try:
-            with candidate.open("r", encoding="utf-8", errors="replace") as handle:
+            with inside.open("r", encoding="utf-8", errors="replace") as handle:
                 for number, line in enumerate(handle, 1):
                     haystack = line if case_sensitive else line.casefold()
                     if needle in haystack:
                         matches.append({
-                            "path": workspace.relative(candidate),
+                            "path": workspace.relative(inside),
                             "line": number,
                             "text": line.rstrip()[:300],
                         })

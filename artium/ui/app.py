@@ -2809,7 +2809,8 @@ class ArtiumApp(App[None]):
 
     async def _install_update(self) -> None:
         self._main_chat().write("Installing Artinium update…")
-        success, output = await install_update()
+        commit = self.update_info.latest_commit if self.update_info else None
+        success, output = await install_update(commit)
         if success:
             self._main_chat().write("Update installed. Restart Artinium to use it.")
         else:

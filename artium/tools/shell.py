@@ -60,7 +60,10 @@ async def run_command(
 ) -> dict[str, Any]:
     if not command.strip():
         raise ValueError("command cannot be empty")
-    timeout = max(1, min(int(timeout), 300))
+    try:
+        timeout = max(1, min(int(timeout), 300))
+    except (TypeError, ValueError):
+        timeout = 60
     risk = command_risk(command)
     if risk:
         request = ConfirmationRequest(command, risk)
@@ -87,14 +90,22 @@ async def run_command(
     async def drain(stream: asyncio.StreamReader | None) -> tuple[bytes, bool]:
         kept = bytearray()
         truncated = False
+        drained = 0
         if stream is None:
             return b"", False
+        # DRAIN_BUDGET bounds total bytes pulled off the pipe: without it a
+        # chatty process spins this loop until timeout even though output is
+        # already capped at MAX_OUTPUT.
         while chunk := await stream.read(8192):
+            drained += len(chunk)
             remaining = MAX_OUTPUT - len(kept)
             if remaining > 0:
                 kept.extend(chunk[:remaining])
             if len(chunk) > remaining:
                 truncated = True
+            if drained >= 512_000:
+                truncated = True
+                break
         return bytes(kept), truncated
 
     stdout_task = asyncio.create_task(drain(process.stdout))
@@ -111,7 +122,8 @@ async def run_command(
             "command": command,
             "stdout": stdout.decode(errors="replace"),
             "stderr": f"{decoded_error}\n{timeout_note}".strip(),
-            "exit_code": 124,
+            "exit_code": None,
+            "timed_out": True,
             "truncated": stdout_cut or stderr_cut,
         }
     except asyncio.CancelledError:

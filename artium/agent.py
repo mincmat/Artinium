@@ -179,11 +179,38 @@ class Agent:
             for index, call in enumerate(tool_calls):
                 function = call.get("function") or {}
                 name = str(function.get("name") or "")
-                arguments = self._arguments(function.get("arguments"))
                 call_id = str(call.get("id") or f"call_{iteration}_{index}")
+                try:
+                    arguments = self._arguments(function.get("arguments"))
+                except ValueError as exc:
+                    self.history.append({
+                        "role": "tool",
+                        "tool_name": name,
+                        "tool_call_id": call_id,
+                        "content": json.dumps({"error": str(exc), "error_type": "InvalidArguments"}),
+                    })
+                    yield AgentEvent("tool_end", {
+                        "name": name,
+                        "arguments": {},
+                        "result": {"error": str(exc), "error_type": "InvalidArguments"},
+                        "error": True,
+                    })
+                    continue
                 self.stats.tool_calls += 1
                 yield AgentEvent("tool_start", {"name": name, "arguments": arguments})
-                result = await self.tools.execute(name, arguments)
+                try:
+                    result = await self.tools.execute(name, arguments)
+                except asyncio.CancelledError:
+                    # Never leave an orphan assistant.tool_calls: Ollama
+                    # rejects it on the next request. Record the
+                    # interruption explicitly, then propagate.
+                    self.history.append({
+                        "role": "tool",
+                        "tool_name": name,
+                        "tool_call_id": call_id,
+                        "content": json.dumps({"cancelled": True}),
+                    })
+                    raise
                 self.history.append({
                     "role": "tool",
                     "tool_name": name,
@@ -209,10 +236,12 @@ class Agent:
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
-                return parsed if isinstance(parsed, dict) else {}
             except json.JSONDecodeError:
-                return {}
-        return {}
+                raise ValueError(f"Model returned invalid tool arguments: {value[:200]!r}")
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Model returned non-object tool arguments: {value[:200]!r}")
+            return parsed
+        raise ValueError(f"Model returned non-object tool arguments: {type(value).__name__}")
 
     def _stats_data(self) -> dict[str, Any]:
         return {

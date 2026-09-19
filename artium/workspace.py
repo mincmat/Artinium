@@ -32,6 +32,20 @@ class Workspace:
     def relative(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix() or "."
 
+    def contained(self, path: Path) -> Path | None:
+        """Resolve symlinks and return the path only if it stays inside.
+
+        Returns None when the path escapes the workspace (e.g. a planted
+        ``ln -s /etc/passwd``) or cannot be resolved. Use it right before
+        any open/read/write, not just at argument-validation time.
+        """
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(self.root)
+        except (OSError, ValueError):
+            return None
+        return resolved
+
     def replace_root(self, root: Path) -> None:
         replacement = Workspace(root)
         self.root = replacement.root

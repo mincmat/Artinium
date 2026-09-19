@@ -89,7 +89,14 @@ class ToolRegistry:
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         try:
             if name in {"write_file", "edit_file", "run_command"}:
-                policy = self.permission_policy(name) if self.permission_policy else "allow"
+                if self.permission_policy:
+                    policy = self.permission_policy(name)
+                elif name == "run_command":
+                    # Secure default: never run arbitrary shell commands
+                    # silently; file writes stay workspace-contained.
+                    policy = "deny"
+                else:
+                    policy = "allow"
                 if policy == "deny":
                     return ToolResult(name, arguments, {"cancelled": True, "reason": "denied by tool permissions"})
                 if policy == "ask":
@@ -129,13 +136,13 @@ class ToolRegistry:
                 if function is None:
                     raise ValueError(f"unknown tool: {name}")
                 data = function(self.workspace, **arguments)
-            if not data.get("cancelled"):
+            if not data.get("cancelled") and not data.get("error"):
                 self.undo.commit(snapshot)
-            if name == "run_command" and data.get("exit_code") not in {None, 0}:
+            if name == "run_command" and (data.get("timed_out") or data.get("exit_code") not in {None, 0}):
                 exit_code = data.get("exit_code")
                 message = (
                     "The command timed out and was stopped."
-                    if exit_code == 124
+                    if data.get("timed_out")
                     else f"The command failed with exit code {exit_code}."
                 )
                 data.update({"error": message, "error_type": "CommandFailed", "retryable": False})

@@ -151,6 +151,65 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(agent.stats.input_tokens, 65)
             self.assertEqual(agent.context_tokens, 40)
 
+    async def test_invalid_tool_arguments_are_reported_not_swallowed(self) -> None:
+        class BadArgsClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def chat_stream(self, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+                self.calls += 1
+                if self.calls == 1:
+                    yield {"message": {"content": "", "tool_calls": [{"id": "1", "function": {
+                        "name": "read_file", "arguments": "{oops"
+                    }}]}, "done": True}
+                else:
+                    yield {"message": {"content": "Listo."}, "done": True}
+
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Agent(
+                BadArgsClient(), ModelInfo("test", capabilities=("completion", "tools")),
+                ToolRegistry(Workspace(Path(directory)), permission_policy=lambda _: "allow"),
+            )  # type: ignore[arg-type]
+            events = [event async for event in agent.run("read it")]
+            ends = [event for event in events if event.kind == "tool_end"]
+            self.assertEqual(len(ends), 1)
+            self.assertTrue(ends[0].data["error"])
+            self.assertEqual(ends[0].data["result"]["error_type"], "InvalidArguments")
+            self.assertFalse((Path(directory) / "made.txt").exists())
+
+    async def test_cancel_during_tool_leaves_no_orphan_calls(self) -> None:
+        class SleepyClient:
+            async def chat_stream(self, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+                yield {"message": {"content": "", "tool_calls": [{"id": "9", "function": {
+                    "name": "run_command", "arguments": {"command": "sleep 30"}
+                }}]}, "done": True}
+
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Agent(
+                SleepyClient(), ModelInfo("test", capabilities=("completion", "tools")),
+                ToolRegistry(Workspace(Path(directory)), permission_policy=lambda _: "allow"),
+            )  # type: ignore[arg-type]
+
+            async def consume() -> None:
+                async for _ in agent.run("wait"):
+                    pass
+
+            task = asyncio.create_task(consume())
+            await asyncio.sleep(0.3)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            pending = 0
+            for message in agent.history:
+                if message.get("role") == "assistant" and message.get("tool_calls"):
+                    pending += len(message["tool_calls"])
+                elif message.get("role") == "tool":
+                    pending -= 1
+            self.assertEqual(pending, 0)
+            tool_messages = [m for m in agent.history if m.get("role") == "tool"]
+            self.assertTrue(tool_messages)
+            self.assertIn("cancelled", tool_messages[-1]["content"])
+
     async def test_generation_is_cancellable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             agent = Agent(SlowClient(), ModelInfo("test"), ToolRegistry(Workspace(Path(directory))))  # type: ignore[arg-type]

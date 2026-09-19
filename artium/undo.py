@@ -29,16 +29,22 @@ class UndoManager:
         if tool not in {"write_file", "edit_file"}:
             return None
         path = str(arguments.get("path") or "")
-        target = self.workspace.resolve(path)
-        existed = target.is_file()
-        content = target.read_text(encoding="utf-8") if existed else ""
+        try:
+            target = self.workspace.resolve(path)
+        except ValueError:
+            return None
+        try:
+            existed = target.is_file()
+            content = target.read_text(encoding="utf-8") if existed else ""
+        except (OSError, UnicodeDecodeError):
+            return None
         return UndoRecord(uuid4().hex, tool, self.workspace.relative(target), existed, content)
 
     def commit(self, record: UndoRecord | None) -> None:
         if record is None:
             return
         self.records.append(record)
-        del self.records[:-self.limit]
+        del self.records[:-max(1, self.limit)]
 
     def dump(self) -> list[dict[str, object]]:
         return [
@@ -75,12 +81,16 @@ class UndoManager:
 
     def _restore(self, record: UndoRecord) -> dict[str, Any]:
         target = self.workspace.resolve(record.path)
+        if target.is_symlink() or self.workspace.contained(target) is None:
+            raise ValueError(f"refusing to undo through a path outside the workspace: {record.path}")
         if record.existed:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(record.content, encoding="utf-8")
+            temporary = target.with_name(target.name + ".artinium-tmp")
+            temporary.write_text(record.content, encoding="utf-8")
+            temporary.replace(target)
             action = "restored"
         else:
-            if target.exists() and target.is_file():
+            if target.exists() and target.is_file() and not target.is_symlink():
                 target.unlink()
             action = "removed"
         return {"path": record.path, "action": action, "tool": record.tool}

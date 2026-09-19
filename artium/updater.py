@@ -73,14 +73,42 @@ async def check_for_update(current: str) -> UpdateInfo | None:
         return None
 
 
-async def install_update() -> tuple[bool, str]:
-    process = await asyncio.create_subprocess_exec(
-        "bash",
-        "-c",
-        f"curl -fsSL {INSTALLER_URL} | bash",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    output, _ = await process.communicate()
+def installer_url(commit: str | None) -> str:
+    """Installer pinned to a verified commit instead of floating ``main``."""
+    if commit:
+        return f"https://raw.githubusercontent.com/{REPOSITORY}/{commit}/install"
+    return INSTALLER_URL
+
+
+async def install_update(commit: str | None = None) -> tuple[bool, str]:
+    # Download fully first (never `curl | bash`): a cut connection must not
+    # execute a truncated script, and the code matches the reviewed commit.
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(installer_url(commit))
+            response.raise_for_status()
+        script = response.text
+    except (httpx.HTTPError, ValueError) as exc:
+        return False, f"Could not download the installer: {exc}"
+    if not script.startswith("#!/usr/bin/env bash"):
+        return False, "Downloaded installer failed a sanity check; refusing to run it."
+    import tempfile
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, encoding="utf-8") as handle:
+            handle.write(script)
+            path = handle.name
+        process = await asyncio.create_subprocess_exec(
+            "bash",
+            path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output, _ = await process.communicate()
+    finally:
+        try:
+            Path(path).unlink()
+        except (OSError, NameError):
+            pass
     text = output.decode(errors="replace").strip()
     return process.returncode == 0, text[-2000:]
