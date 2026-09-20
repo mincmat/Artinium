@@ -23,7 +23,7 @@ from textual.widgets import Button, DirectoryTree, Input, Label, ListItem, ListV
 from ..agent import INTERRUPTION_NOTE, Agent
 from .. import __version__
 from ..error_messages import explain
-from ..model_settings import ModelSettings, ModelSettingsStore
+from ..model_settings import ModelSettings, ModelSettingsStore, total_memory_gib
 from ..ollama_client import ModelInfo, OllamaClient, OllamaError, OllamaUnavailable
 from ..preferences import AppPreferences, MUTATING_TOOLS, PERMISSION_VALUES, PreferencesStore
 from ..sessions import SessionRecord, SessionStore
@@ -762,11 +762,13 @@ class ContextSettingsScreen(EscapeModalScreen):
         return values[(index + direction) % len(values)]
 
     def _refresh_rows(self) -> None:
-        context = (
-            "Automatic (up to 32,768)"
-            if self.settings.context_window is None
-            else f"{min(self.settings.context_window, self.model.context_length):,} tokens"
-        )
+        if self.settings.context_window is None:
+            selected = self.settings.automatic_context_window(self.model.context_length)
+            ram_gib = total_memory_gib()
+            ram = f" · {ram_gib:.0f} GB RAM" if ram_gib is not None else ""
+            context = f"Automatic ({selected:,}{ram})"
+        else:
+            context = f"{min(self.settings.context_window, self.model.context_length):,} tokens"
         automatic = "Off" if self.settings.auto_compact_threshold is None else f"At {self.settings.auto_compact_threshold}%"
         values = {
             "context_window": context,

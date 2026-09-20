@@ -1,9 +1,26 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+
+def total_memory_gib() -> float | None:
+    """Return installed physical memory, without depending on a platform SDK."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as memory_info:
+            for line in memory_info:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+
+    try:
+        return (os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")) / (1024**3)
+    except (AttributeError, OSError, ValueError):
+        return None
 
 
 @dataclass(slots=True)
@@ -16,11 +33,39 @@ class ModelSettings:
     context_window: int | None = None
     auto_compact_threshold: int | None = 80
 
+    @staticmethod
+    def automatic_context_window(model_context: int, *, ram_gib: float | None = None) -> int:
+        """Choose a useful default without consuming too much RAM on smaller PCs."""
+        if ram_gib is None:
+            ram_gib = total_memory_gib()
+        if ram_gib is None:
+            requested = 32_768
+        elif ram_gib < 8:
+            requested = 4_096
+        elif ram_gib < 12:
+            requested = 8_192
+        elif ram_gib < 20:
+            requested = 16_384
+        elif ram_gib < 32:
+            requested = 32_768
+        elif ram_gib < 48:
+            requested = 65_536
+        elif ram_gib < 64:
+            requested = 131_072
+        elif ram_gib < 128:
+            requested = 262_144
+        else:
+            requested = 524_288
+        return min(max(requested, 4_096), max(model_context, 1))
+
+    def effective_context_window(self, model_context: int) -> int:
+        requested = self.context_window
+        if requested is None:
+            requested = self.automatic_context_window(model_context)
+        return min(max(requested, 4_096), max(model_context, 1))
+
     def options_for(self, model_context: int) -> dict[str, int | float]:
-        # Artinium historically used at most 32K automatically. Keep that safe
-        # default, but honour a user-selected value up to the model's own limit.
-        context = self.context_window or min(model_context, 32_768)
-        options: dict[str, int | float] = {"num_ctx": min(context, model_context)}
+        options: dict[str, int | float] = {"num_ctx": self.effective_context_window(model_context)}
         if self.temperature is not None:
             options["temperature"] = self.temperature
         if self.max_output_tokens is not None:

@@ -302,6 +302,16 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ModelSelectionTests(unittest.TestCase):
+    def test_automatic_context_window_scales_with_installed_memory(self) -> None:
+        self.assertEqual(ModelSettings.automatic_context_window(262_144, ram_gib=7.9), 4_096)
+        self.assertEqual(ModelSettings.automatic_context_window(262_144, ram_gib=14), 16_384)
+        self.assertEqual(ModelSettings.automatic_context_window(262_144, ram_gib=40), 65_536)
+        self.assertEqual(ModelSettings.automatic_context_window(8_192, ram_gib=64), 8_192)
+
+    def test_automatic_context_window_is_used_for_ollama_options(self) -> None:
+        with patch("artium.model_settings.total_memory_gib", return_value=14):
+            self.assertEqual(ModelSettings().options_for(32_768)["num_ctx"], 16_384)
+
     def test_prefers_tool_capable_coding_size(self) -> None:
         models = [
             ModelInfo("embed:latest", capabilities=("embedding",)),

@@ -105,8 +105,7 @@ class Agent:
         return self.compact_context()
 
     def _context_limit(self) -> int:
-        requested = self.settings.context_window or min(self.model.context_length, 32_768)
-        return min(max(requested, 4_096), self.model.context_length)
+        return self.settings.effective_context_window(self.model.context_length)
 
     @property
     def context_tokens(self) -> int:
