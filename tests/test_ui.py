@@ -744,7 +744,7 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(0.1)
                 self.assertEqual(app.active_session.tool_permissions["write_file"], "allow")
 
-    async def test_authorize_modal_sets_the_session_rule(self) -> None:
+    async def test_authorize_modal_allows_only_the_current_tool_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             app = ArtiumApp(Path(directory))
             await app.client.close()
@@ -756,12 +756,12 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(0.2)
                 from artium.ui.app import PermissionPromptScreen
                 self.assertIsInstance(app.screen, PermissionPromptScreen)
-                app.screen.dismiss("allow")
+                app.screen.dismiss("allow_once")
                 self.assertEqual(await task, "allow_once")
-                self.assertEqual(app.active_session.tool_permissions["write_file"], "allow")
+                self.assertEqual(app.active_session.tool_permissions["write_file"], "ask")
                 task = asyncio.create_task(app.authorize_tool(PermissionRequest("edit_file", "demo.py")))
                 await pilot.pause(0.2)
-                app.screen.dismiss("ask")
+                app.screen.dismiss("deny")
                 self.assertEqual(await task, "deny")
                 self.assertEqual(app.active_session.tool_permissions["edit_file"], "ask")
                 task = asyncio.create_task(app.authorize_tool(PermissionRequest("run_command", "ls")))

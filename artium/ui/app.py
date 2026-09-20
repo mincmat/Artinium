@@ -1353,11 +1353,10 @@ class PermissionPromptScreen(EscapeModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="permission-prompt-box"):
             yield Static(f"Allow {self.request.tool}?", id="permission-prompt-title")
-            yield Static("Session only · new sessions start at ask", id="permission-prompt-scope")
+            yield Static("This action only · change rules in Permissions", id="permission-prompt-scope")
             yield Static(self.request.summary, id="permission-prompt-detail")
             yield ListView(
-                ListItem(Label("Allow"), id="permission-allow"),
-                ListItem(Label("Ask"), id="permission-ask"),
+                ListItem(Label("Allow once"), id="permission-allow-once"),
                 ListItem(Label("Deny"), id="permission-deny"),
                 id="permission-prompt-list",
             )
@@ -2345,20 +2344,9 @@ class ArtiumApp(App[None]):
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
 
         def answer(value: str | None) -> None:
-            # The modal sets the session rule; only "allow" approves this run.
-            decision = value or "deny"
-            session = self.active_session
-            if session is not None and request.tool in MUTATING_TOOLS:
-                if decision == "allow":
-                    session.tool_permissions[request.tool] = "allow"
-                    self._save_active_session()
-                    decision = "allow_once"
-                elif decision == "ask":
-                    session.tool_permissions[request.tool] = "ask"
-                    self._save_active_session()
-                    decision = "deny"
-            elif decision == "allow":
-                decision = "allow_once"
+            # Ask is deliberately per invocation. Persistent rules belong in
+            # the Permissions screen, never in a one-off confirmation.
+            decision = value if value in {"allow_once", "deny"} else "deny"
             if not future.done():
                 future.set_result(decision)
 
