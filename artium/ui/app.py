@@ -430,7 +430,6 @@ class CommandMenu(EscapeModalScreen):
         ("changes", "Changes", "review session file changes", "changes cambios historial"),
         ("artinium", "Artinium", "themes, permissions, updates, and info", "artinium config info"),
         ("themes", "Themes", "change interface theme", "theme tema apariencia"),
-        ("permissions", "Permissions", "tool permission policy", "permissions permisos herramientas"),
         ("updates", "Updates", "check for updates", "update actualizar version"),
     )
 
@@ -460,7 +459,13 @@ class CommandMenu(EscapeModalScreen):
                 if _search_matches(query, title, detail, keywords)
             ]
         items: list[ListItem] = []
+        seen_keys: set[str] = set()
         for key, title, detail in self._filtered:
+            # A menu action has one stable widget ID. Keep the runtime safe if
+            # a future search-index entry accidentally repeats an action.
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             locked = self.working and key not in self._ALLOWED_WHILE_WORKING
             label = (
                 f"{title}\n[dim]{'Wait for current task to finish' if locked else detail}[/]"
@@ -1381,6 +1386,8 @@ class QuestionAnswer(Input):
 
     def action_return_to_choices(self) -> None:
         if self.value:
+            return
+        if not self.screen.query(QuestionList):
             return
         choices = self.screen.query_one(QuestionList)
         choices.index = len(choices) - 1

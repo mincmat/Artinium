@@ -71,6 +71,21 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(app.screen.focused, choices)
                 self.assertEqual(choices.index, 1)
 
+    async def test_free_form_question_accepts_up_arrow_without_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 28)) as pilot:
+                await pilot.pause(0.15)
+                app.push_screen(QuestionScreen(QuestionRequest(question="Explain", options=[])))
+                await pilot.pause(0.05)
+                answer = app.screen.query_one("#question-answer", Input)
+                self.assertIs(app.screen.focused, answer)
+                await pilot.press("up")
+                await pilot.pause(0.05)
+                self.assertIs(app.screen.focused, answer)
+
     def test_turn_duration_format(self) -> None:
         self.assertEqual(ArtiumApp._format_duration(173), "2m 53s")
 
@@ -779,6 +794,8 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
         # Global index must not contain dynamic session/model names.
         blob = " ".join(f"{title} {detail} {keywords}" for _, title, detail, keywords in CommandMenu.SEARCH_INDEX)
         self.assertNotIn("qwen", blob.lower())
+        keys = [key for key, *_ in CommandMenu.SEARCH_INDEX]
+        self.assertEqual(len(keys), len(set(keys)))
 
     async def test_menu_search_filters_and_selects_with_keyboard(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -797,6 +814,20 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 items = list(app.screen.query_one("#command-list", ListView).query(ListItem))
                 ids = [item.id or "" for item in items]
                 self.assertTrue(any("context" in item_id or "compact" in item_id for item_id in ids))
+
+    async def test_menu_search_never_mounts_duplicate_action_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                await pilot.press("ctrl+p")
+                await pilot.pause(0.1)
+                await pilot.press("n")
+                await pilot.pause(0.2)
+                ids = [item.id for item in app.screen.query_one("#command-list", ListView).query(ListItem)]
+                self.assertEqual(len(ids), len(set(ids)))
 
     def test_prompt_paste_converts_paths_to_opencode_style_pills(self) -> None:
         from unittest.mock import MagicMock
