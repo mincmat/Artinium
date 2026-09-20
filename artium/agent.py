@@ -123,6 +123,7 @@ class Agent:
             self.history = self.context.compact(self.history)
             payload = [{"role": "system", "content": SYSTEM_PROMPT}, *self.history]
             content_parts: list[str] = []
+            thinking_parts: list[str] = []
             tool_calls: list[dict[str, Any]] = []
             final_meta: dict[str, Any] = {}
             # Keep the streamed answer in history as it arrives. This lets the
@@ -145,6 +146,7 @@ class Agent:
                     message = chunk.get("message") or {}
                     thinking = message.get("thinking") or ""
                     if thinking:
+                        thinking_parts.append(thinking)
                         yield AgentEvent("thinking_delta", {"text": thinking})
                     text = message.get("content") or ""
                     if text:
@@ -169,6 +171,14 @@ class Agent:
             self.stats.last_prompt_tokens = int(final_meta.get("prompt_eval_count") or 0)
             if tool_calls:
                 assistant["tool_calls"] = tool_calls
+            if not content_parts and thinking_parts and not tool_calls:
+                # Some Ollama model/template combinations place a complete
+                # final answer in ``thinking`` and leave ``content`` empty.
+                # Preserve it as the actual reply instead of saving a blank
+                # assistant turn or leaving the UI's Thinking block active.
+                text = "".join(thinking_parts)
+                assistant["content"] = text
+                yield AgentEvent("thinking_as_response", {"text": text})
             yield AgentEvent("stats", self._stats_data())
 
             if not tool_calls:

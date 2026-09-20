@@ -373,6 +373,22 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("Thinking", block.title)
                 self.assertRegex(block.title, r"·\s+\d+m \d+s|\d+s$")
 
+    async def test_thinking_only_reply_is_promoted_to_assistant_message(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                chat = app.query_one("#chat", ChatLog)
+                chat.prepare_assistant()
+                chat.add_thinking("Final answer sent as thinking.")
+                await chat.promote_thinking_to_response("Final answer sent as thinking.")
+                await pilot.pause(0.05)
+                self.assertFalse(chat.query(ThinkingBlock))
+                assistant = app.query_one(AssistantMessage)
+                self.assertEqual(assistant.text, "Final answer sent as thinking.")
+
     async def test_session_manager_creates_and_restores_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             app = ArtiumApp(Path(directory))

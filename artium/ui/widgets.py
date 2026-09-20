@@ -534,6 +534,13 @@ class ChatLog(VerticalScroll):
         self._thinking.append(text)
         self.call_after_refresh(self.scroll_end, animate=False)
 
+    async def promote_thinking_to_response(self, text: str) -> None:
+        """Recover a final reply accidentally streamed through ``thinking``."""
+        if self._thinking is not None:
+            self._thinking.remove()
+            self._thinking = None
+        await self.add_delta(text)
+
     def finish_thinking(self) -> None:
         if self._thinking is not None:
             self._thinking.finish()

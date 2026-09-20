@@ -2260,6 +2260,8 @@ class ArtiumApp(App[None]):
                     self._autosave_active_session(force=True)
                 elif event.kind == "thinking_delta":
                     chat.add_thinking(event.data["text"])
+                elif event.kind == "thinking_as_response":
+                    await chat.promote_thinking_to_response(event.data["text"])
                 elif event.kind == "delta":
                     await chat.add_delta(event.data["text"])
                     self._autosave_active_session()
@@ -2284,6 +2286,7 @@ class ArtiumApp(App[None]):
                     chat.write(event.data["text"], tone="warning")
                     self._autosave_active_session(force=True)
                 elif event.kind == "done":
+                    chat.finish_thinking()
                     elapsed = max(0.001, time.monotonic() - started_at)
                     output_tokens = max(0, self.agent.stats.output_tokens - starting_output_tokens)
                     rate = output_tokens / elapsed
