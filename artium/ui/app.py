@@ -293,7 +293,7 @@ class ModelScreen(EscapeModalScreen):
             yield Input(placeholder="Type to filter models…  e.g. qwen", id="model-search")
             yield ListView(*[
                 ListItem(Label(
-                    model.name + f"\n[dim]{self._capabilities(model)}[/]"
+                    model.display_name + f"\n[dim]{self._capabilities(model)}[/]"
                 ), id=f"model-{index}")
                 for index, model in enumerate(self._filtered)
             ], id="model-list")
@@ -320,7 +320,10 @@ class ModelScreen(EscapeModalScreen):
     async def _rebuild_models(self, query: str) -> None:
         q = _normalize_search(query)
         if q:
-            self._filtered = [m for m in self.models if q in _normalize_search(m.name)]
+            self._filtered = [
+                model for model in self.models
+                if q in _normalize_search(f"{model.display_name} {model.name}")
+            ]
         else:
             self._filtered = list(self.models)
         view = self.query_one("#model-list", ListView)
@@ -328,7 +331,7 @@ class ModelScreen(EscapeModalScreen):
         for index, model in enumerate(self._filtered):
             await view.append(
                 ListItem(
-                    Label(model.name + f"\n[dim]{self._capabilities(model)}[/]"),
+                    Label(model.display_name + f"\n[dim]{self._capabilities(model)}[/]"),
                     id=f"model-{index}",
                 )
             )
@@ -2236,7 +2239,7 @@ class ArtiumApp(App[None]):
         self._tool_active = False
         started_at = time.monotonic()
         starting_output_tokens = self.agent.stats.output_tokens if self.agent else 0
-        model_used = self.agent.model.name if self.agent else "model"
+        model_used = self.agent.model.display_name if self.agent else "model"
         chat.show_activity("Thinking…")
         try:
             assert self.agent is not None
@@ -2317,7 +2320,7 @@ class ArtiumApp(App[None]):
                     model = self._pending_model
                     self._pending_model = None
                     self._activate_model(model)
-                    chat.write(f"Model changed to {model.name}.")
+                    chat.write(f"Model changed to {model.display_name}.")
                 queued = self._queued_prompts.pop(0) if self._queued_prompts else None
                 if queued is not None:
                     self._update_queue_ui()
@@ -2431,15 +2434,15 @@ class ArtiumApp(App[None]):
             reasoning = "reasoning auto"
         if self._pending_model is not None:
             self._main_static("#model-status").update(
-                f"{self.agent.model.name} → {self._pending_model.name}  ·  after task"
+                f"{self.agent.model.display_name} → {self._pending_model.display_name}  ·  after task"
             )
         else:
-            self._main_static("#model-status").update(f"{self.agent.model.name}  ·  {reasoning}")
+            self._main_static("#model-status").update(f"{self.agent.model.display_name}  ·  {reasoning}")
 
     def _warn_if_no_tools(self) -> None:
         if self.agent and not self.agent.model.supports_tools:
             self._main_chat().write(
-                f"{self.agent.model.name} does not support tools. It can chat, but cannot inspect files, edit, run commands, or search the web.",
+                f"{self.agent.model.display_name} does not support tools. It can chat, but cannot inspect files, edit, run commands, or search the web.",
                 tone="warning",
             )
 
@@ -3129,7 +3132,7 @@ class ArtiumApp(App[None]):
                 if self._generation_task and not self._generation_task.done():
                     self._pending_model = model
                     self._update_model_status()
-                    self._main_chat().write(f"{model.name} will be used after the current task.")
+                    self._main_chat().write(f"{model.display_name} will be used after the current task.")
                 else:
                     self._activate_model(model)
         if return_to_hub:

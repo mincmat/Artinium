@@ -13,7 +13,7 @@ import httpx
 from artium.agent import Agent
 from artium.context import ContextManager
 from artium.model_settings import ModelSettings
-from artium.ollama_client import ModelInfo, OllamaClient, OllamaError
+from artium.ollama_client import ModelInfo, OllamaClient, OllamaError, model_display_name
 from artium.tools import ToolRegistry
 from artium.updater import check_for_update
 from artium.workspace import Workspace
@@ -311,6 +311,15 @@ class ModelSelectionTests(unittest.TestCase):
     def test_automatic_context_window_is_used_for_ollama_options(self) -> None:
         with patch("artium.model_settings.total_memory_gib", return_value=14):
             self.assertEqual(ModelSettings().options_for(32_768)["num_ctx"], 16_384)
+
+    def test_display_name_keeps_ollama_identifier_unchanged(self) -> None:
+        model = ModelInfo("qwen3.5:9b")
+        self.assertEqual(model.name, "qwen3.5:9b")
+        self.assertEqual(model.display_name, "Qwen 3.5")
+        self.assertEqual(
+            model_display_name("richardyoung/qwen3-8b-abliterated:Q4_K_M"),
+            "Qwen 3 Abliterated",
+        )
 
     def test_prefers_tool_capable_coding_size(self) -> None:
         models = [

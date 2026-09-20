@@ -23,7 +23,7 @@ async def _check() -> int:
         print("Download one with: ollama pull qwen3:8b")
         return 1
     selected = OllamaClient.choose_model(models)
-    print(f"Ollama available. {len(models)} model(s). Selected: {selected.name}")
+    print(f"Ollama available. {len(models)} model(s). Selected: {selected.display_name}")
     return 0
 
 

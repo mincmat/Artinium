@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
@@ -17,6 +18,30 @@ class OllamaError(RuntimeError):
     pass
 
 
+_DISPLAY_WORDS = {
+    "deepseek": "DeepSeek",
+    "gpt": "GPT",
+    "llama": "Llama",
+    "mistral": "Mistral",
+    "qwen": "Qwen",
+}
+
+
+def model_display_name(name: str) -> str:
+    """Turn an Ollama identifier into a compact, human-readable model name.
+
+    The original identifier remains the source of truth for every Ollama call,
+    session and selection. This is deliberately display-only.
+    """
+    local_name = name.rsplit("/", 1)[-1].split(":", 1)[0]
+    words = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", local_name)
+    words = re.sub(r"[-_]+", " ", words).split()
+    visible = [word for word in words if not re.fullmatch(r"(?i)(?:\d+(?:\.\d+)?b|q\d+(?:_[a-z0-9]+)*)", word)]
+    if not visible:
+        return name
+    return " ".join(_DISPLAY_WORDS.get(word.lower(), word.capitalize()) for word in visible)
+
+
 @dataclass(slots=True)
 class ModelInfo:
     name: str
@@ -26,6 +51,11 @@ class ModelInfo:
     capabilities: tuple[str, ...] = ()
     context_length: int = 32768
     details: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def display_name(self) -> str:
+        """Friendly label for the UI; ``name`` remains Ollama's identifier."""
+        return model_display_name(self.name)
 
     @property
     def supports_tools(self) -> bool:
