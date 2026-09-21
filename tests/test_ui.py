@@ -15,11 +15,11 @@ from artium.updater import UpdateInfo
 from artium.ui.app import (
     ArtiumApp, CommandMenu, ContextSettingsScreen, DeleteSessionScreen, EditQueueScreen,
     ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, PromptInput, QueueScreen, SessionScreen, StopScreen,
-    QuestionScreen, _search_matches, _system_lines, _system_memory,
+    QuestionScreen, UpdateProgressScreen, _search_matches, _system_lines, _system_memory,
 )
 from artium.sessions import SessionRecord
 from artium.tools import PermissionRequest, QuestionRequest
-from artium.ui.widgets import ActivityPulse, AssistantMessage, ChatLog, ThinkingBlock, UserMessage, WorkspaceTree
+from artium.ui.widgets import ActivityPulse, AssistantMessage, ChatLog, SystemNotice, ThinkingBlock, UserMessage, WorkspaceTree
 
 
 class FakeUIClient:
@@ -368,6 +368,21 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 sidebar = str(app.query_one("#artinium-status", Static).renderable)
                 self.assertIn("UPDATE", sidebar)
                 self.assertIn("0.2.12", sidebar)
+
+    async def test_update_progress_stays_out_of_the_chat(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                progress = UpdateProgressScreen()
+                app.push_screen(progress)
+                await pilot.pause(0.05)
+                progress.complete(True, "")
+                await pilot.pause(0.05)
+                self.assertIn("Update installed", str(progress.query_one("#update-progress-detail", Static).renderable))
+                self.assertFalse(app._main_chat().query(SystemNotice))
 
     async def test_thinking_is_available_in_a_collapsible_transcript_block(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

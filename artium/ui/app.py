@@ -1647,6 +1647,46 @@ class UpdateScreen(EscapeModalScreen):
             self.dismiss(event.item.id.removeprefix("update-"))
 
 
+class UpdateProgressScreen(EscapeModalScreen):
+    """Keeps installation feedback within the Artinium settings flow."""
+
+    CSS = """
+    UpdateProgressScreen { align: center middle; background: #000000 75%; }
+    #update-progress-box { width: 66; height: auto; padding: 1 2; background: $surface; border: none; }
+    #update-progress-title { height: 2; color: $text; text-style: bold; }
+    #update-progress-detail { height: auto; color: $text-muted; margin-bottom: 1; }
+    #update-progress-actions { height: auto; border: none; background: $surface; }
+    #update-progress-actions ListItem { height: 3; padding: 1; background: $surface; color: $text; }
+    #update-progress-actions > ListItem.-highlight { background: #303030; color: #ffffff; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="update-progress-box"):
+            yield Static("Updates", id="update-progress-title")
+            yield Static("Installing update…", id="update-progress-detail")
+
+    def complete(self, success: bool, output: str) -> None:
+        detail = self.query_one("#update-progress-detail", Static)
+        if success:
+            detail.update("[bold]Update installed.[/]\nRestart Artinium to use it.")
+        else:
+            detail.update(f"[bold]Update failed.[/]\n{output or 'No diagnostic was returned.'}")
+        actions = ListView(ListItem(Label("Close"), id="update-progress-close"), id="update-progress-actions")
+        self.query_one("#update-progress-box", Vertical).mount(actions)
+        actions.focus()
+
+    @on(ListView.Selected)
+    def selected(self, event: ListView.Selected) -> None:
+        if event.item.id == "update-progress-close":
+            self.dismiss()
+
+    def key_escape(self) -> None:
+        # Do not dismiss mid-install: closing the modal should never make it
+        # look like the installer was cancelled while it continues running.
+        if self.query("#update-progress-actions"):
+            self.dismiss()
+
+
 class InfoScreen(EscapeModalScreen):
     CSS = """
     InfoScreen { align: center middle; background: #000000 75%; }
@@ -2840,18 +2880,17 @@ class ArtiumApp(App[None]):
             self.preferences_store.save(self.preferences)
             self.update_topbar()
         elif choice == "install":
-            asyncio.create_task(self._install_update())
+            progress = UpdateProgressScreen()
+            self.push_screen(progress)
+            asyncio.create_task(self._install_update(progress))
         if return_to_artinium and choice != "install":
             self.action_artinium(return_to_menu=return_to_menu)
 
-    async def _install_update(self) -> None:
-        self._main_chat().write("Installing Artinium update…")
+    async def _install_update(self, progress: UpdateProgressScreen) -> None:
         commit = self.update_info.latest_commit if self.update_info else None
         success, output = await install_update(commit)
-        if success:
-            self._main_chat().write("Update installed. Restart Artinium to use it.")
-        else:
-            self._main_chat().write(f"Update failed.\n{output}", tone="error")
+        if progress.is_mounted:
+            progress.complete(success, output)
 
     def action_undo(self) -> None:
         if self._generation_task and not self._generation_task.done():
