@@ -1826,7 +1826,7 @@ class ArtiumApp(App[None]):
                 with Vertical(id="composer-shell"):
                     yield Static("", id="queue-preview", markup=False)
                     yield Static("", id="attachments-preview", markup=True)
-                    yield PromptInput(placeholder="Write a message…  ·  drop or paste images/files", id="prompt", disabled=True)
+                    yield PromptInput(placeholder="Write a message…", id="prompt", disabled=True)
                     with Horizontal(id="composer-meta"):
                         yield Static("", id="model-status")
                         yield Static("Enter send  ·  Ctrl+P menu  ·  Ctrl+C exit", id="send-hint")
