@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "artinium-local"
-version = "0.2.13"
+version = "0.2.14"
 description = "A context-efficient local coding agent for Ollama (beta)"
 readme = "README.md"
 requires-python = ">=3.11"

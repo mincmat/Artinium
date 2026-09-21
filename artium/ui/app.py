@@ -1690,6 +1690,10 @@ class ArtiumApp(App[None]):
         height: 3fr; padding: 1 2; background: $bg;
         border-top: solid #242424; color: #a8a8a8;
     }
+    #session-metrics { height: auto; background: $bg; color: #a8a8a8; }
+    #artinium-status {
+        height: auto; dock: bottom; padding-top: 1; background: $bg; color: #a8a8a8;
+    }
     #chat-column { width: 1fr; background: $bg; }
     #chat {
         width: 1fr; height: 1fr; margin: 0 6 0 3; padding: 1 0; background: $bg;
@@ -1807,12 +1811,14 @@ class ArtiumApp(App[None]):
             with Vertical(id="sidebar"):
                 yield Static("Files", id="files-label")
                 yield WorkspaceTree(str(self.workspace.root), id="tree")
-                yield Static(
-                    "[bold]New session[/]\n\n[dim]CONTEXT[/]  0%\n[dim]TOKENS[/]   0 / —\n[dim]TOOLS[/]    0"
-                    + _system_lines() + self._artinium_status(),
-                    id="session-info",
-                    markup=True,
-                )
+                with Vertical(id="session-info"):
+                    yield Static(
+                        "[bold]New session[/]\n\n[dim]CONTEXT[/]  0%\n[dim]TOKENS[/]   0 / —\n[dim]TOOLS[/]    0"
+                        + _system_lines(),
+                        id="session-metrics",
+                        markup=True,
+                    )
+                    yield Static(self._artinium_status(), id="artinium-status", markup=True)
             with Vertical(id="chat-column"):
                 yield ChatLog(id="chat")
                 with Vertical(id="composer-shell"):
@@ -2379,23 +2385,24 @@ class ArtiumApp(App[None]):
         calls = int((stats or {}).get("tool_calls", self.agent.stats.tool_calls))
         session_title = self.active_session.title if self.active_session else "new session"
         context_percent = min(100, round(used / limit * 100)) if limit else 0
-        self._main_static("#session-info").update(
+        self._main_static("#session-metrics").update(
             f"[bold]{session_title[:44]}[/]\n\n"
             f"[dim]CONTEXT[/]  {context_percent}%\n"
             f"[dim]TOKENS[/]   {used:,} / {limit:,}\n"
             f"[dim]TOOLS[/]    {calls}"
-            + _system_lines() + self._artinium_status()
+            + _system_lines()
         )
+        self._main_static("#artinium-status").update(self._artinium_status())
 
     def _artinium_status(self) -> str:
-        """Compact version/update state shown with the active session details."""
-        status = f"\n\n[dim]ARTINIUM[/] {__version__} Beta"
+        """Branded version/update state anchored at the sidebar's bottom."""
+        status = f"[bold]ARTINIUM[/]  [bold]v{__version__}[/]  [dim]Beta[/]"
         if (
             self.update_info
             and self.update_info.available
             and self.update_info.identity != self.preferences.ignored_version
         ):
-            status += f"\n[bold]↑ UPDATE[/] {self.update_info.latest}"
+            status += f"\n[bold]↑ UPDATE AVAILABLE[/]  {self.update_info.latest}"
         return status
 
     def _main_static(self, selector: str) -> Static:
