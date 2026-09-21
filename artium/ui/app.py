@@ -209,7 +209,7 @@ class ModelHubScreen(EscapeModalScreen):
             yield Static("Model", id="model-hub-title")
             if self.working:
                 yield Static(
-                    "Change model applies after this task",
+                    "Model changes apply after this task · settings apply to the next request",
                     id="model-hub-help",
                 )
             yield ListView(
@@ -217,14 +217,10 @@ class ModelHubScreen(EscapeModalScreen):
                 ListItem(
                     Label("Model settings\n[dim]Reasoning, temperature, and output[/]"),
                     id="model-hub-settings",
-                    disabled=self.working,
-                    classes="-locked" if self.working else "",
                 ),
                 ListItem(
                     Label("Context settings\n[dim]Window and compaction[/]"),
                     id="model-hub-context",
-                    disabled=self.working,
-                    classes="-locked" if self.working else "",
                 ),
                 id="model-hub-list",
             )
@@ -436,7 +432,10 @@ class CommandMenu(EscapeModalScreen):
         ("updates", "Updates", "check for updates", "update actualizar version"),
     )
 
-    _ALLOWED_WHILE_WORKING = {"files", "model", "model-change", "commands"}
+    _ALLOWED_WHILE_WORKING = {
+        "files", "model", "model-change", "model-settings", "model-context",
+        "permissions", "commands", "artinium", "themes", "updates", "autocompact",
+    }
 
     def __init__(self, *, working: bool = False):
         super().__init__()
@@ -448,7 +447,7 @@ class CommandMenu(EscapeModalScreen):
             yield Static("Menu", id="command-title")
             yield Input(placeholder="Type to search…  e.g. contexto", id="command-search")
             if self.working:
-                yield Static("Model selection and the sidebar remain available", id="command-help")
+                yield Static("Settings, permissions, model selection, and the sidebar remain available", id="command-help")
             yield ListView(*self._build_items(""), id="command-list")
 
     def _build_items(self, query: str) -> list[ListItem]:
@@ -1953,7 +1952,7 @@ class ArtiumApp(App[None]):
         argument = argument.strip().lower()
         chat = self.query_one("#chat", ChatLog)
         working = bool(self._generation_task and not self._generation_task.done())
-        idle_only = {"/settings", "/context", "/sessions", "/workspace", "/compact", "/autocompact"}
+        idle_only = {"/sessions", "/workspace", "/compact"}
         if command in idle_only and working:
             chat.write("Wait for the current task to finish before changing this.", tone="warning")
             return
@@ -2617,8 +2616,6 @@ class ArtiumApp(App[None]):
             self._main_chat().write("This session has not been compacted yet.")
 
     def action_auto_compact(self, *, return_to_context: bool = False, return_to_menu: bool = False) -> None:
-        if self._generation_task and not self._generation_task.done():
-            return
         self.push_screen(
             AutoCompactScreen(self.model_settings.auto_compact_threshold),
             lambda value: self._auto_compact_selected(value, return_to_context, return_to_menu),
@@ -2655,8 +2652,6 @@ class ArtiumApp(App[None]):
         self.push_screen(CommandMenu(working=working), self._menu_selected)
 
     def action_context_settings(self, *, return_to_menu: bool = False, return_to_model_hub: bool = False) -> None:
-        if self._generation_task and not self._generation_task.done():
-            return
         if not self.agent:
             return
         self.push_screen(
@@ -2756,11 +2751,6 @@ class ArtiumApp(App[None]):
         return self.active_session.tool_permissions.get(name, "ask")
 
     def action_permissions(self, *, return_to_menu: bool = False) -> None:
-        if self._generation_task and not self._generation_task.done():
-            self._main_chat().write(
-                "Permissions are available after the current task finishes.", tone="warning"
-            )
-            return
         if self.active_session is None:
             return
         self.push_screen(
@@ -3090,7 +3080,7 @@ class ArtiumApp(App[None]):
         )
 
     def action_model_settings(self, *, return_to_menu: bool = False, return_to_hub: bool = False) -> None:
-        if not self.agent or self._generation_task:
+        if not self.agent:
             return
         self.push_screen(
             ModelSettingsScreen(self.model_settings, self.agent.model, self._apply_model_settings),
