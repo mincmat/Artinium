@@ -66,25 +66,14 @@ def _system_memory() -> tuple[float, float] | None:
     return ((total - available) / 1024**2, total / 1024**2)
 
 
-def _system_load() -> float | None:
-    """1-minute load average; None when unavailable."""
-    try:
-        return os.getloadavg()[0]
-    except OSError:
-        return None
-
-
 def _system_lines() -> str:
-    """Extra sidebar rows (RAM + load), kept within the 24-char content width."""
+    """RAM sidebar row, kept within the 24-character content width."""
     lines = ""
     memory = _system_memory()
     if memory:
         used_gb, total_gb = memory
         percent = round(used_gb / total_gb * 100) if total_gb else 0
         lines += f"\n[dim]RAM[/]    {percent}% {used_gb:.1f}/{total_gb:.1f}G"
-    load = _system_load()
-    if load is not None:
-        lines += f"\n[dim]LOAD[/]   {load:.2f}"
     return lines
 
 

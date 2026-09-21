@@ -14,7 +14,7 @@ from artium.model_settings import ModelSettings, ModelSettingsStore
 from artium.ui.app import (
     ArtiumApp, CommandMenu, ContextSettingsScreen, DeleteSessionScreen, EditQueueScreen,
     ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, PromptInput, QueueScreen, SessionScreen, StopScreen,
-    QuestionScreen, _search_matches, _system_lines, _system_load, _system_memory,
+    QuestionScreen, _search_matches, _system_lines, _system_memory,
 )
 from artium.sessions import SessionRecord
 from artium.tools import PermissionRequest, QuestionRequest
@@ -705,9 +705,6 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(total_gb, 0)
             self.assertGreaterEqual(used_gb, 0)
             self.assertLessEqual(used_gb, total_gb)
-        load = _system_load()
-        if load is not None:
-            self.assertGreaterEqual(load, 0)
         for line in _system_lines().splitlines():
             # Sidebar content is 24 chars wide; keep rows short, markup excluded.
             self.assertLessEqual(len(line.replace("[dim]", "").replace("[/]", "")), 24)
