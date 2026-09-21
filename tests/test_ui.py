@@ -11,6 +11,7 @@ from textual.widgets import Collapsible, Input, ListItem, ListView, Static
 
 from artium.ollama_client import ModelInfo
 from artium.model_settings import ModelSettings, ModelSettingsStore
+from artium.updater import UpdateInfo
 from artium.ui.app import (
     ArtiumApp, CommandMenu, ContextSettingsScreen, DeleteSessionScreen, EditQueueScreen,
     ChangeHistoryScreen, ModelHubScreen, ModelScreen, ModelSettingsScreen, PromptInput, QueueScreen, SessionScreen, StopScreen,
@@ -342,8 +343,9 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(0.2)
                 prompt = app.query_one("#prompt", Input)
                 self.assertIs(app.focused, prompt)
-                self.assertIn("qwen-test:8b", str(app.query_one("#model-status", Static).renderable))
+                self.assertIn("Qwen Test", str(app.query_one("#model-status", Static).renderable))
                 self.assertIn("CONTEXT[/]  0%", str(app.query_one("#session-info", Static).renderable))
+                self.assertIn("ARTINIUM", str(app.query_one("#session-info", Static).renderable))
                 self.assertFalse(app.query_one(WorkspaceTree).can_focus)
                 self.assertFalse(app.query_one(ChatLog).can_focus)
                 chat = app.query_one("#chat", ChatLog)
@@ -353,6 +355,19 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 app.query_one(AssistantMessage).focus()
                 await pilot.pause(0.05)
                 self.assertIs(app.focused, prompt)
+
+    async def test_sidebar_marks_an_available_artinium_update(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                app.update_info = UpdateInfo("0.2.11", "0.2.12")
+                app.update_topbar()
+                sidebar = str(app.query_one("#session-info", Static).renderable)
+                self.assertIn("UPDATE", sidebar)
+                self.assertIn("0.2.12", sidebar)
 
     async def test_thinking_is_available_in_a_collapsible_transcript_block(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

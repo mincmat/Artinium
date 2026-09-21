@@ -1807,7 +1807,12 @@ class ArtiumApp(App[None]):
             with Vertical(id="sidebar"):
                 yield Static("Files", id="files-label")
                 yield WorkspaceTree(str(self.workspace.root), id="tree")
-                yield Static("[bold]New session[/]\n\n[dim]CONTEXT[/]  0%\n[dim]TOKENS[/]   0 / —\n[dim]TOOLS[/]    0" + _system_lines(), id="session-info", markup=True)
+                yield Static(
+                    "[bold]New session[/]\n\n[dim]CONTEXT[/]  0%\n[dim]TOKENS[/]   0 / —\n[dim]TOOLS[/]    0"
+                    + _system_lines() + self._artinium_status(),
+                    id="session-info",
+                    markup=True,
+                )
             with Vertical(id="chat-column"):
                 yield ChatLog(id="chat")
                 with Vertical(id="composer-shell"):
@@ -2379,8 +2384,19 @@ class ArtiumApp(App[None]):
             f"[dim]CONTEXT[/]  {context_percent}%\n"
             f"[dim]TOKENS[/]   {used:,} / {limit:,}\n"
             f"[dim]TOOLS[/]    {calls}"
-            + _system_lines()
+            + _system_lines() + self._artinium_status()
         )
+
+    def _artinium_status(self) -> str:
+        """Compact version/update state shown with the active session details."""
+        status = f"\n\n[dim]ARTINIUM[/] {__version__} Beta"
+        if (
+            self.update_info
+            and self.update_info.available
+            and self.update_info.identity != self.preferences.ignored_version
+        ):
+            status += f"\n[bold]↑ UPDATE[/] {self.update_info.latest}"
+        return status
 
     def _main_static(self, selector: str) -> Static:
         """Find persistent UI behind any open modal."""
@@ -2790,6 +2806,8 @@ class ArtiumApp(App[None]):
 
     async def _check_updates(self, *, announce: bool) -> None:
         self.update_info = await check_for_update(__version__)
+        if self.agent:
+            self.update_topbar()
         if (
             announce
             and self.update_info
@@ -2811,6 +2829,7 @@ class ArtiumApp(App[None]):
         if choice == "ignore" and self.update_info:
             self.preferences.ignored_version = self.update_info.identity
             self.preferences_store.save(self.preferences)
+            self.update_topbar()
         elif choice == "install":
             asyncio.create_task(self._install_update())
         if return_to_artinium and choice != "install":
