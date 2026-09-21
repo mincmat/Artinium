@@ -1697,7 +1697,6 @@ class ArtiumApp(App[None]):
         scrollbar-color: #333333; scrollbar-background: $bg;
         overflow-x: hidden;
     }
-    DirectoryTree:hover { background: #0b0b0b; }
     #session-info {
         height: 3fr; padding: 1 2; background: $bg;
         border-top: solid #242424; color: #a8a8a8;
