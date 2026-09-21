@@ -91,7 +91,6 @@ class ThinkingBlock(Collapsible):
             collapsed=True,
             classes="thinking-block",
         )
-        self.tooltip = "Click to show the model's reasoning."
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
