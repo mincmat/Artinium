@@ -89,6 +89,8 @@ class ThinkingBlock(Collapsible):
             self._detail,
             title="Thinking…",
             collapsed=True,
+            collapsed_symbol="",
+            expanded_symbol="",
             classes="thinking-block",
         )
 
@@ -186,9 +188,10 @@ class ChatLog(VerticalScroll):
         self._assistant: AssistantMessage | None = None
         self._assistant_text = ""
         self._assistant_pending = False
-        self._tool: Collapsible | None = None
+        self._tool: Collapsible | Static | None = None
         self._tool_detail: Static | None = None
         self._tool_entries: list[Collapsible] = []
+        self._tool_title = ""
         self._activity: ActivityPulse | None = None
         self._thinking: ThinkingBlock | None = None
 
@@ -208,6 +211,11 @@ class ChatLog(VerticalScroll):
         "web_search": "◌",
         "fetch_url": "↗",
     }
+
+    # These actions produce output worth inspecting (a diff or terminal
+    # transcript). Read-only operations already expose their useful outcome in
+    # the single-line summary, so making them clickable only adds visual noise.
+    EXPANDABLE_TOOLS = frozenset({"write_file", "edit_file", "run_command"})
 
     def _mount_animated(self, widget: Widget) -> None:
         widget.styles.opacity = 0.0
@@ -460,14 +468,21 @@ class ChatLog(VerticalScroll):
         self.finish_thinking()
         self.clear_activity()
         self._assistant_pending = False
-        self._tool_detail = Static("Waiting for result…", markup=True, classes="tool-detail")
-        self._tool = Collapsible(
-            self._tool_detail,
-            title=f"{self.tool_badge(name)}  {self.tool_label(name, arguments)}",
-            collapsed=True,
-            classes="tool-call -running",
-        )
-        self._tool_entries.append(self._tool)
+        self._tool_title = f"{self.tool_badge(name)}  {self.tool_label(name, arguments)}"
+        if name in self.EXPANDABLE_TOOLS:
+            self._tool_detail = Static("Waiting for result…", markup=True, classes="tool-detail")
+            self._tool = Collapsible(
+                self._tool_detail,
+                title=self._tool_title,
+                collapsed=True,
+                collapsed_symbol="",
+                expanded_symbol="",
+                classes="tool-call -running",
+            )
+            self._tool_entries.append(self._tool)
+        else:
+            self._tool_detail = None
+            self._tool = Static(self._tool_title, markup=True, classes="tool-call -running")
         self._mount_animated(self._tool)
 
     def finish_tool(
@@ -481,11 +496,15 @@ class ChatLog(VerticalScroll):
         label = self.tool_label(name, arguments)
         if self._tool is not None:
             outcome = self.tool_outcome(name, result, error)
-            self._tool.title = (
+            self._tool_title = (
                 f"{'x  ' if error else ''}{self.tool_badge(name)}  {label}"
                 + (f"  ·  {outcome}" if outcome else "")
             )
-            self._tool.collapsed = not show_details
+            if isinstance(self._tool, Collapsible):
+                self._tool.title = self._tool_title
+                self._tool.collapsed = not show_details
+            else:
+                self._tool.update(self._tool_title)
             self._tool.remove_class("-running")
             self._tool.set_class(error, "-failed")
             self._tool.set_class(not error, "-complete")
@@ -500,7 +519,11 @@ class ChatLog(VerticalScroll):
         """Leave an honest, compact record when cancellation interrupts a tool."""
         if self._tool is None:
             return
-        self._tool.title = f"x  {self._tool.title}  ·  interrupted"
+        self._tool_title = f"x  {self._tool_title}  ·  interrupted"
+        if isinstance(self._tool, Collapsible):
+            self._tool.title = self._tool_title
+        else:
+            self._tool.update(self._tool_title)
         self._tool.remove_class("-running")
         self._tool.add_class("-failed")
         if self._tool_detail is not None:
@@ -556,6 +579,7 @@ class ChatLog(VerticalScroll):
         self._tool = None
         self._tool_detail = None
         self._tool_entries.clear()
+        self._tool_title = ""
         self._activity = None
         self._thinking = None
         self._assistant_pending = False

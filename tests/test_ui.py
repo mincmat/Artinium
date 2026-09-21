@@ -388,6 +388,34 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("Thinking", block.title)
                 self.assertRegex(block.title, r"·\s+\d+m \d+s|\d+s$")
 
+    async def test_only_mutating_tool_rows_are_expandable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = ArtiumApp(Path(directory))
+            await app.client.close()
+            app.client = FakeUIClient()  # type: ignore[assignment]
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause(0.2)
+                chat = app.query_one("#chat", ChatLog)
+
+                chat.add_tool("read_file", {"path": "notes.txt"})
+                await pilot.pause(0.05)
+                self.assertIsInstance(chat._tool, Static)
+
+                chat.finish_tool(
+                    "read_file",
+                    {"path": "notes.txt"},
+                    {"path": "notes.txt", "start_line": 1, "end_line": 3},
+                    False,
+                    False,
+                )
+                self.assertIn("3 lines", str(chat._tool.renderable))  # type: ignore[union-attr]
+
+                chat.add_tool("write_file", {"path": "notes.txt", "content": "hello"})
+                await pilot.pause(0.05)
+                self.assertIsInstance(chat._tool, Collapsible)
+                self.assertEqual(chat._tool._title.collapsed_symbol, "")  # type: ignore[union-attr]
+                self.assertEqual(chat._tool._title.expanded_symbol, "")  # type: ignore[union-attr]
+
     async def test_thinking_only_reply_is_promoted_to_assistant_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             app = ArtiumApp(Path(directory))
