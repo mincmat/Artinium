@@ -1344,7 +1344,9 @@ class PermissionPromptScreen(EscapeModalScreen):
             yield Static("This action only · change rules in Permissions", id="permission-prompt-scope")
             yield Static(self.request.summary, id="permission-prompt-detail")
             yield ListView(
-                ListItem(Label("Allow once"), id="permission-allow-once"),
+                # The callback uses underscore-separated decision values.
+                # Keep the widget id aligned with that internal contract.
+                ListItem(Label("Allow once"), id="permission-allow_once"),
                 ListItem(Label("Deny"), id="permission-deny"),
                 id="permission-prompt-list",
             )

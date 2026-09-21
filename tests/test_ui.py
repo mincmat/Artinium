@@ -817,7 +817,7 @@ class UISmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(0.2)
                 from artium.ui.app import PermissionPromptScreen
                 self.assertIsInstance(app.screen, PermissionPromptScreen)
-                app.screen.dismiss("allow_once")
+                await pilot.press("enter")
                 self.assertEqual(await task, "allow_once")
                 self.assertEqual(app.active_session.tool_permissions["write_file"], "ask")
                 task = asyncio.create_task(app.authorize_tool(PermissionRequest("edit_file", "demo.py")))
